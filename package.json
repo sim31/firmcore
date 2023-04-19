@@ -1,0 +1,33 @@
+{
+  "name": "firmcore",
+  "version": "0.1.0",
+  "description": "Core of firmament node",
+  "scripts": {
+    "test": "ts-mocha --type-check test/**",
+    "prepare": "test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sim31/firmcore.git"
+  },
+  "keywords": [
+    "blockchain",
+    "IPFS",
+    "DAO"
+  ],
+  "author": "sim31",
+  "license": "GPL-3.0",
+  "bugs": {
+    "url": "https://github.com/sim31/firmcore/issues"
+  },
+  "homepage": "https://github.com/sim31/firmcore#readme",
+  "devDependencies": {
+    "@types/chai": "^4.3.4",
+    "@types/mocha": "^10.0.1",
+    "chai": "^4.3.7",
+    "mocha": "^10.2.0",
+    "pre-commit": "^1.2.2",
+    "ts-mocha": "^10.0.0",
+    "typescript": "^5.0.4"
+  }
+}
