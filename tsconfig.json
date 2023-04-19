@@ -1,13 +1,15 @@
 {
   "compilerOptions": {
-    "target": "es2020",
-    "module": "commonjs",
+    "target": "ESNext",
+    "module": "CommonJS",
     "esModuleInterop": true,
+    "moduleResolution": "node",
     "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": true,
     "strict": true,
     "skipLibCheck": true,
     "sourceMap": true,
-    "resolveJsonModule": true
-  }
+    "resolveJsonModule": true,
+    "outDir": "./out"
+  },
 }

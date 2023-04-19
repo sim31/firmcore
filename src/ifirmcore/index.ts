@@ -277,6 +277,8 @@ export async function toEFChainPODSlice(
 }
 
 export interface IFirmCore {
+  init(): Promise<void>;
+  shutDown(): Promise<void>;
   createEFChain(args: EFConstructorArgs): Promise<EFChain>;
   getChain(address: Address): Promise<EFChain | undefined>;
   createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer>;

@@ -44,8 +44,6 @@ const ganacheProv = ganache.provider({
 const provider = new ethers.providers.Web3Provider(ganacheProv as any);
 const signer = provider.getSigner(0);
 
-init();
-
 async function deployAbi() {
   const factory = new FirmChainAbi__factory(signer);
   return (await (await factory.deploy({ gasLimit: 9552000 })).deployed());
@@ -105,7 +103,7 @@ async function deployEFChain(
   return { contract: await contract.deployed(), genesisBl };
 }
 
-async function init() {
+async function _init() {
   abiLib = deployAbi();
   const abiC = await abiLib;
   console.log("Abi deployed: ", abiC.address);
@@ -206,6 +204,12 @@ function convertConfirmerOp(op: ConfirmerOp): ConfirmerOpValue {
 }
 
 export class FirmCore implements IFirmCore {
+  async init(): Promise<void> {
+    return await _init();
+  }
+  async shutDown(): Promise<void> {
+    return await ganacheProv.disconnect();
+  }
   async createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer> {
     let w: Wallet;
     if (!('ethSign' in wallet && '_wallet' in wallet && typeof wallet['ethSign'] === 'function')) {

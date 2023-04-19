@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Core of firmament node",
   "scripts": {
-    "test": "ts-mocha --type-check test/**",
+    "test": "mocha -n loader=ts-node/esm --extension ts --timeout 15000",
     "prepare": "npm test"
   },
   "repository": {
@@ -23,11 +23,13 @@
   "homepage": "https://github.com/sim31/firmcore#readme",
   "devDependencies": {
     "@types/chai": "^4.3.4",
+    "@types/chai-as-promised": "^7.1.5",
     "@types/mocha": "^10.0.1",
     "chai": "^4.3.7",
+    "chai-as-promised": "^7.1.1",
     "mocha": "^10.2.0",
     "pre-commit": "^1.2.2",
-    "ts-mocha": "^10.0.0",
+    "ts-node": "^10.9.1",
     "typescript": "^5.0.4"
   },
   "dependencies": {
