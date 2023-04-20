@@ -1,7 +1,7 @@
 import { Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature } from "firmcontracts/interface/types";
 import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice } from "../ifirmcore";
-import ganache from "ganache";
+import ganache, { EthereumProvider } from "ganache";
 import { BigNumber, ethers } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal } from "firmcontracts/interface/firmchain";
 import { getBlockDigest, getBlockId, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi";
@@ -13,6 +13,7 @@ import { IWallet } from '../iwallet';
 import InvalidArgument from '../exceptions/InvalidArgument';
 import NotFound from '../exceptions/NotFound';
 import { Wallet } from "../wallet";
+import assert from 'assert';
 
 let abiLib: Promise<FirmChainAbi>;
 let implLib: Promise<FirmChainImpl>;
@@ -35,50 +36,49 @@ const confirmations: Record<BlockId, Address[]> = {};
 const NullAccountId = 0;
 const NullAccountAddr = ZeroAddr;
 
-const ganacheProv = ganache.provider({
-  fork: {
-    network: 'goerli'
-  },
-});
+let _ganacheProv: EthereumProvider | undefined;
+let _provider: ethers.providers.Web3Provider | undefined;
+let _signer: ethers.providers.JsonRpcSigner | undefined;
 
-const provider = new ethers.providers.Web3Provider(ganacheProv as any);
-const signer = provider.getSigner(0);
-
-async function deployAbi() {
-  const factory = new FirmChainAbi__factory(signer);
+async function _deployAbi() {
+  assert(_signer, "Should have signer set already");
+  const factory = new FirmChainAbi__factory(_signer);
   return (await (await factory.deploy({ gasLimit: 9552000 })).deployed());
 }
 
-async function deployFirmChainImpl(abiContr: FirmChainAbi) {
+async function _deployFirmChainImpl(abiContr: FirmChainAbi) {
+  assert(_signer, "Should have signer set already");
   const factory = new FirmChainImpl__factory({
     ["contracts/FirmChainAbi.sol:FirmChainAbi"]: abiContr.address
-  }, signer);
+  }, _signer);
   return (await (await factory.deploy({ gasLimit: 9552000 })).deployed());
 }
 
-async function deployAccountSystemImpl() {
-  const factory = new AccountSystemImpl__factory(signer);
+async function _deployAccountSystemImpl() {
+  assert(_signer, "Should have signer set already");
+  const factory = new AccountSystemImpl__factory(_signer);
   return (await (await factory.deploy({ gasLimit: 9552000 })).deployed());
 }
 
-function storeAccount(account: Account) {
+function _storeAccount(account: Account) {
   const metadataId = randomBytes32Hex();
   fullAccounts[metadataId] = account;
   return metadataId;
 }
 
-async function deployEFChain(
+async function _deployEFChain(
   fchainImpl: FirmChainImpl,
   accSystemImpl: AccountSystemImpl,
   args: Required<EFConstructorArgs, 'threshold'>,
 ) {
+  assert(_signer, "Should have signer set already");
   const factory = new EdenPlusFractal__factory({
     ["contracts/FirmChainImpl.sol:FirmChainImpl"]: fchainImpl.address,
     ["contracts/AccountSystemImpl.sol:AccountSystemImpl"]: accSystemImpl.address,
-  }, signer);
+  }, _signer);
 
   const confs: AccountValue[] = args.confirmers.map((conf) => {
-    const metadataId = storeAccount(conf);
+    const metadataId = _storeAccount(conf);
     return {
       addr: conf.address,
       metadataId,
@@ -103,18 +103,36 @@ async function deployEFChain(
   return { contract: await contract.deployed(), genesisBl };
 }
 
-async function _init() {
-  abiLib = deployAbi();
+async function _init(verbose: boolean = false, quiet: boolean = true) {
+  // console.log("_init 1", !_ganacheProv, !_provider, !_signer);
+  assert(!_ganacheProv && !_provider && !_signer, "Already initialized");
+  _ganacheProv = ganache.provider({
+    fork: {
+      network: 'goerli'
+    },
+    logging: { quiet, verbose }, 
+  });
+  _provider = new ethers.providers.Web3Provider(_ganacheProv as any);
+  _signer = _provider.getSigner(0);
+  // console.log("_init 2");
+
+  abiLib = _deployAbi();
   const abiC = await abiLib;
-  console.log("Abi deployed: ", abiC.address);
-  implLib = deployFirmChainImpl(abiC);
+  if (!quiet) {
+    console.log("Abi deployed: ", abiC.address);
+  }
+  implLib = _deployFirmChainImpl(abiC);
   const implLibC = await implLib;
-  console.log("ImplLib deployed", implLibC.address);
-  accSystemLib = deployAccountSystemImpl();
-  console.log("Account system deployed: ", (await accSystemLib).address);
+  if (!quiet) {
+    console.log("ImplLib deployed", implLibC.address);
+  }
+  accSystemLib = _deployAccountSystemImpl();
+  if (!quiet) {
+    console.log("Account system deployed: ", (await accSystemLib).address);
+  }
 }
 
-async function waitForInit() {
+async function _waitForInit() {
   return {
     abiLib: await abiLib,
     implLib: await implLib,
@@ -124,7 +142,7 @@ async function waitForInit() {
 
 // TODO:
 // * Take name of a contract function
-async function accessState<RetType>(chain: Chain, blockId: BlockId, f: () => Promise<RetType>): Promise<RetType> {
+async function _accessState<RetType>(chain: Chain, blockId: BlockId, f: () => Promise<RetType>): Promise<RetType> {
   const headId = await chain.contract.getHead();
   if (headId !== blockId) {
     throw new OpNotSupprtedError("Historical or future state access unsupported for now")
@@ -133,7 +151,7 @@ async function accessState<RetType>(chain: Chain, blockId: BlockId, f: () => Pro
   }
 }
 
-async function getAccountById(chain: Chain, accountId: AccountId): Promise<Account | undefined> {
+async function _getAccountById(chain: Chain, accountId: AccountId): Promise<Account | undefined> {
   const val = await chain.contract.getAccount(accountId);
   if (val.addr === NullAccountAddr) {
     return undefined;
@@ -152,7 +170,7 @@ async function getAccountById(chain: Chain, accountId: AccountId): Promise<Accou
   }
 }
 
-function confirmerSetFromBlock(block: OptExtendedBlockValue): ConfirmerSet {
+function _confirmerSetFromBlock(block: OptExtendedBlockValue): ConfirmerSet {
   const blSet = block.state.confirmerSet;
   const confMap = blSet.confirmers.reduce((prevValue, conf) => {
     prevValue[conf.addr] = { address: conf.addr, weight: conf.weight };
@@ -204,11 +222,20 @@ function convertConfirmerOp(op: ConfirmerOp): ConfirmerOpValue {
 }
 
 export class FirmCore implements IFirmCore {
+  private _verbose: boolean = false;
+  private _quiet: boolean = true;
+
+  constructor(verbose: boolean = false, quiet: boolean = true) {
+    this._verbose = verbose;
+    this._quiet = quiet;
+  }
+
   async init(): Promise<void> {
-    return await _init();
+    return await _init(this._verbose, this._quiet);
   }
   async shutDown(): Promise<void> {
-    return await ganacheProv.disconnect();
+    assert(_ganacheProv, "_ganacheProv should already be set");
+    return await _ganacheProv.disconnect();
   }
   async createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer> {
     let w: Wallet;
@@ -267,9 +294,9 @@ export class FirmCore implements IFirmCore {
       nargs = { ...args, threshold };
     }
 
-    const cs = await waitForInit();
+    const cs = await _waitForInit();
 
-    const { contract, genesisBl } = await deployEFChain(cs.implLib, cs.accSystemLib, nargs);
+    const { contract, genesisBl } = await _deployEFChain(cs.implLib, cs.accSystemLib, nargs);
 
     const bId = getBlockId(genesisBl.header);
     blocks[bId] = genesisBl;
@@ -313,7 +340,7 @@ export class FirmCore implements IFirmCore {
         timestamp: timestampToDate(block.header.timestamp),
         msgs: messages, 
         state: {
-          confirmerSet: confirmerSetFromBlock(block),
+          confirmerSet: _confirmerSetFromBlock(block),
           confirmations: () => {
             return new Promise((resolve) => {
               const confs = confirmations[id];
@@ -335,7 +362,7 @@ export class FirmCore implements IFirmCore {
             });
           },
           delegate: (weekIndex: number, roomNumber: number) => {
-            return accessState(chain, id, async () => {
+            return _accessState(chain, id, async () => {
               const bn = await chain.contract.getDelegate(weekIndex, roomNumber);
               const val = bn.toNumber();
               if (val === NullAccountId) {
@@ -347,7 +374,7 @@ export class FirmCore implements IFirmCore {
           },
 
           delegates: (weekIndex: number) => {
-            return accessState(chain, id, async () => {
+            return _accessState(chain, id, async () => {
               const bns = await chain.contract.getDelegates(weekIndex);
               const rVals = bns.map((bn) => bn.toNumber());
               if (rVals.length === 0) {
@@ -359,44 +386,44 @@ export class FirmCore implements IFirmCore {
           },
 
           balance: (accId: AccountId) => {
-            return accessState(chain, id, async () => {
+            return _accessState(chain, id, async () => {
               const bn = await chain.contract.balanceOfAccount(id);
               return bn.toNumber();
             });
           },
 
           balanceByAddr: (address: Address) => {
-            return accessState(chain, id, async () => {
+            return _accessState(chain, id, async () => {
               const bn = await chain.contract.balanceOf(address);
               return bn.toNumber();
             });
           }, 
 
           totalSupply: () => {
-            return accessState(chain, id, async () => {
+            return _accessState(chain, id, async () => {
               const bn = await chain.contract.totalSupply();
               return bn.toNumber();
             });
           },
 
           accountById: (accountId: AccountId) => {
-            return accessState(chain, id, async () => {
-              return await getAccountById(chain, accountId);
+            return _accessState(chain, id, async () => {
+              return await _getAccountById(chain, accountId);
             });
           },
 
           accountByAddress: (address: Address) => {
-            return accessState(chain, id, async () => {
+            return _accessState(chain, id, async () => {
               const accountId = (await chain.contract.byAddress(address)).toNumber();
               if (accountId === NullAccountId) {
                 return undefined;
               }
-              return await getAccountById(chain, accountId);
+              return await _getAccountById(chain, accountId);
             });
           }, 
 
           directoryId: () => {
-            return accessState(chain, id, async () => {
+            return _accessState(chain, id, async () => {
               const dir = await chain.contract.directoryId();
               if (dir === ZeroId) {
                 return undefined;
@@ -442,7 +469,7 @@ export class FirmCore implements IFirmCore {
             newThreshold = msg.threshold;
             confOps = msg.ops.map((op) => convertConfirmerOp(op));
           } else if (msg.name === 'createAccount') {
-            const metadataId = storeAccount(msg.account);
+            const metadataId = _storeAccount(msg.account);
             const acc: AccountValue = {
               addr: msg.account.address ?? ZeroAddr,
               metadataId,
@@ -459,7 +486,7 @@ export class FirmCore implements IFirmCore {
               createMsg(chain.contract, 'setDir', [msg.dir])
             );
           } else if (msg.name === 'updateAccount') {
-            const metadataId = storeAccount(msg.newAccount);
+            const metadataId = _storeAccount(msg.newAccount);
             const newAcc = {
               addr: msg.newAccount.address ?? ZeroAddr,
               metadataId,
