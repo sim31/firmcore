@@ -1,11 +1,11 @@
 import { Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature } from "firmcontracts/interface/types";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice } from "../ifirmcore";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD } from "../ifirmcore";
 import ganache, { EthereumProvider } from "ganache";
 import { BigNumber, ethers } from "ethers";
-import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal } from "firmcontracts/interface/firmchain";
+import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain";
 import { getBlockDigest, getBlockId, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi";
-import { ZeroAddr } from 'firmcontracts/interface/types';
+import { ZeroAddr, ConfirmerSet as FcConfirmerSet  } from 'firmcontracts/interface/types';
 import { timestampToDate } from '../helpers/date';
 import OpNotSupprtedError from '../exceptions/OpNotSupported';
 import ProgrammingError from '../exceptions/ProgrammingError';
@@ -14,6 +14,7 @@ import InvalidArgument from '../exceptions/InvalidArgument';
 import NotFound from '../exceptions/NotFound';
 import { Wallet } from "../wallet";
 import assert from 'assert';
+import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet';
 
 let abiLib: Promise<FirmChainAbi>;
 let implLib: Promise<FirmChainImpl>;
@@ -183,7 +184,7 @@ function _confirmerSetFromBlock(block: OptExtendedBlockValue): ConfirmerSet {
   };
 }
 
-function confirmStatusFromBlock(block: OptExtendedBlockValue, confirms: Address[]): ConfirmationStatus {
+function _confirmStatusFromBlock(block: OptExtendedBlockValue, confirms: Address[]): ConfirmationStatus {
   const blSet = block.state.confirmerSet;
   let weight = 0;
   let potentialWeight = 0;
@@ -202,18 +203,26 @@ function confirmStatusFromBlock(block: OptExtendedBlockValue, confirms: Address[
   };
 }
 
-async function signBlock(wallet: Wallet, block: OptExtendedBlockValue): Promise<Signature> {
+async function _signBlock(wallet: Wallet, block: OptExtendedBlockValue): Promise<Signature> {
   const digest = getBlockDigest(block.header);
   return await wallet.ethSign(digest);
 }
 
-function convertConfOpId(id: ConfirmerOpId): number {
+function convertFcConfirmerSet(fcConfSet: FcConfirmerSet): ConfirmerSet {
+  const confMap: ConfirmerMap = {};
+  for (const conf of fcConfSet.confirmers) {
+    confMap[conf.addr] = { address: conf.addr, weight: conf.weight };
+  }
+  return { confirmers: confMap, threshold: fcConfSet.threshold };
+}
+
+function _convertConfOpId(id: ConfirmerOpId): number {
   return id === 'add' ? 0 : 1;
 }
 
-function convertConfirmerOp(op: ConfirmerOp): ConfirmerOpValue {
+function _convertConfirmerOp(op: ConfirmerOp): ConfirmerOpValue {
   return {
-    opId: convertConfOpId(op.opId),
+    opId: _convertConfOpId(op.opId),
     conf: {
       addr: op.confirmer.address,
       weight: op.confirmer.weight,
@@ -222,6 +231,10 @@ function convertConfirmerOp(op: ConfirmerOp): ConfirmerOpValue {
 }
 
 export class FirmCore implements IFirmCore {
+  readonly NullAddr = ZeroAddr;
+  readonly NullBlockId = ZeroId;
+  readonly NullAccountId = NullAccountId;
+
   private _verbose: boolean = false;
   private _quiet: boolean = true;
 
@@ -254,7 +267,7 @@ export class FirmCore implements IFirmCore {
         if (!chain) {
           throw new NotFound("Chain not found");
         }
-        const signature = await signBlock(w, block);
+        const signature = await _signBlock(w, block);
 
         const success = await chain.contract.extConfirm(
           block.header,
@@ -272,7 +285,7 @@ export class FirmCore implements IFirmCore {
         }
         bConfs.push(wallet.getAddress());
 
-        const confirmStatus = confirmStatusFromBlock(block, bConfs);
+        const confirmStatus = _confirmStatusFromBlock(block, bConfs);
         if (confirmStatus.final) {
           await chain.contract.finalizeAndExecute(block);
         }
@@ -289,9 +302,7 @@ export class FirmCore implements IFirmCore {
       }
       nargs = { ...args, threshold: args.threshold };
     } else {
-      const sumWeight = args.confirmers.length;
-      const threshold = Math.ceil((sumWeight * 2) / 3) + 1;
-      nargs = { ...args, threshold };
+      nargs = { ...args, threshold: defaultThreshold(args.confirmers) };
     }
 
     const cs = await _waitForInit();
@@ -301,7 +312,9 @@ export class FirmCore implements IFirmCore {
     const bId = getBlockId(genesisBl.header);
     blocks[bId] = genesisBl;
     blockNums[bId] = 0;
-    orderedBlocks[contract.address]?.push(bId);
+    const ordBlocks = [];
+    ordBlocks.push(bId);
+    orderedBlocks[contract.address] = ordBlocks;
     msgs[bId] = [];
     confirmations[bId] = [];
     chains[contract.address] = {
@@ -329,7 +342,8 @@ export class FirmCore implements IFirmCore {
       const block = blocks[id];
       const height = blockNums[id];
       const messages = msgs[id];
-      if (!block || !height || !messages) {
+      // console.log("blockById 1: ", block, "\n", height, "\n", messages);
+      if (!block || height === undefined || !messages) {
         return undefined;
       }
 
@@ -357,7 +371,7 @@ export class FirmCore implements IFirmCore {
               if (!confs) {
                 reject(new NotFound("Confirmation object not found"));
               } else {
-                resolve(confirmStatusFromBlock(block, confs));
+                resolve(_confirmStatusFromBlock(block, confs));
               }
             });
           },
@@ -438,6 +452,32 @@ export class FirmCore implements IFirmCore {
     };
 
     const builder: EFBlockBuilder = {
+      createUpdateConfirmersMsg: (
+        prevBlock: BlockId | EFBlock | EFBlockPOD,
+        confirmerOps: ConfirmerOp[],
+      ): UpdateConfirmersMsg => {
+        let confMap: ConfirmerMap;
+        if (typeof prevBlock === 'string') {
+          const bl = blocks[prevBlock];          
+          if (!bl) {
+            throw new InvalidArgument("No block with this id");
+          }
+
+          const confSet = convertFcConfirmerSet(bl.state.confirmerSet);
+          confMap = confSet.confirmers;
+        } else {
+          confMap = prevBlock.state.confirmerSet.confirmers;
+        }
+
+        const newMap = updatedConfirmerMap(confMap, confirmerOps);
+        const newThreshold = defaultThreshold(Object.values(newMap))
+        return {
+          name: 'updateConfirmers',
+          threshold: newThreshold,
+          ops: confirmerOps,
+        }
+      },
+
       createBlock: async (prevBlockId: BlockId, messages: EFMsg[]): Promise<EFBlock> => {
         // TODO: Check if we have prevBlock
         const prevBlock = blocks[prevBlockId];
@@ -467,7 +507,7 @@ export class FirmCore implements IFirmCore {
             }
 
             newThreshold = msg.threshold;
-            confOps = msg.ops.map((op) => convertConfirmerOp(op));
+            confOps = msg.ops.map((op) => _convertConfirmerOp(op));
           } else if (msg.name === 'createAccount') {
             const metadataId = _storeAccount(msg.account);
             const acc: AccountValue = {
@@ -564,4 +604,13 @@ export class FirmCore implements IFirmCore {
 
     return efChain;
   }
+
+  randomAddress(): Address {
+    return randomBytes32Hex();    
+  }
+
+  randomBlockId(): BlockId {
+    return randomBytes32Hex();    
+  }
+
 }

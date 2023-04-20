@@ -24,15 +24,18 @@
   "devDependencies": {
     "@types/chai": "^4.3.4",
     "@types/chai-as-promised": "^7.1.5",
+    "@types/chai-subset": "^1.3.3",
     "@types/mocha": "^10.0.1",
     "chai": "^4.3.7",
     "chai-as-promised": "^7.1.1",
+    "chai-subset": "^1.6.0",
     "mocha": "^10.2.0",
     "pre-commit": "^1.2.2",
     "ts-node": "^10.9.1",
     "typescript": "^5.0.4"
   },
   "dependencies": {
+    "date-fns": "^2.29.3",
     "ethers": "^5.7.2",
     "firmcontracts": "github:sim31/firmcontracts",
     "ganache": "^7.8.0",

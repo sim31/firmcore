@@ -18,6 +18,9 @@ export interface Confirmer {
   address: Address;
   weight: number;
 }
+export function newConfirmer(address: Address, weight: number = 1): Confirmer {
+  return { address, weight };
+}
 
 export type ConfirmerMap = Record<Address, Confirmer>;
 
@@ -76,6 +79,14 @@ export interface Account {
   address?: Address;
   name?: string;
   extAccounts: ExtAccountMap;
+}
+export function newAccount(
+  extAccounts: ExtAccountMap,
+  address?: Address,
+  name?: string,
+  id?: AccountId,
+): Account {
+  return { id: id ?? 0, address, name, extAccounts };
 }
 
 export interface FirmAccountSystemState extends ChainState {
@@ -154,8 +165,15 @@ export interface AddConfirmerOp extends ConfirmerOp {
   opId: 'add';
 }
 
-export interface RemoveConfirmerOp {
+export interface RemoveConfirmerOp extends ConfirmerOp {
   opId: 'remove';
+}
+
+export function newAddConfirmerOp(confirmer: Confirmer): AddConfirmerOp {
+  return { opId: 'add', confirmer };
+}
+export function newRemoveConfirmerOp(confirmer: Confirmer): RemoveConfirmerOp {
+  return { opId: 'remove', confirmer };
 }
 
 export interface UpdateConfirmersMsg extends Msg {
@@ -199,6 +217,12 @@ export type EFBlockPOD = Overwrite<EFBlock, { state: EFChainState }>;
 export interface EFBlockBuilder {
   // Creates an publishes the block
   createBlock(prevBlockId: BlockId, msgs: EFMsg[]): Promise<EFBlock>;
+
+  // Should automatically set the threshold
+  createUpdateConfirmersMsg(
+    prevBlock: BlockId | EFBlock | EFBlockPOD,
+    confirmerOps: ConfirmerOp[]
+  ): UpdateConfirmersMsg;
 }
 
 export interface BlockConfirmer {
@@ -206,14 +230,31 @@ export interface BlockConfirmer {
 }
 
 export type AccountWithAddress = Required<Account, 'address'>;
+export function newAccountWithAddress(
+  extAccounts: ExtAccountMap,
+  address: Address,
+  name?: string,
+  id?: AccountId,
+): AccountWithAddress {
+  return { id: id ?? 0, address, name, extAccounts };
+}
 
 export interface EFConstructorArgs {
   confirmers: AccountWithAddress[];
   name: string;
   symbol: string;
-  timestamp: Date;
   threshold?: number;
 }
+
+export function newEFConstructorArgs(
+  confirmers: AccountWithAddress[],
+  name: string,
+  symbol: string,
+  threshold?: number,
+): EFConstructorArgs {
+  return { confirmers, name, symbol, threshold };
+}
+
 
 export interface EFChainPODSlice {
   constructorArgs: EFConstructorArgs;
@@ -229,9 +270,6 @@ export interface EFChain extends RespectChain {
   getSlice(start?: number, end?: number): Promise<EFBlock[]>;
 
   getPODSlice(start?: number, end?: number): Promise<EFChainPODSlice>;
-  // TODO:
-  // blockByNum(num: number): Promise<EFBlock>;
-  // TODO: slices
 }
 
 export async function getAllDelegates(block: EFBlock): Promise<Delegates> {
@@ -277,9 +315,17 @@ export async function toEFChainPODSlice(
 }
 
 export interface IFirmCore {
+  readonly NullAddr: Address;
+  readonly NullBlockId: BlockId;
+  readonly NullAccountId: AccountId;
+
   init(): Promise<void>;
   shutDown(): Promise<void>;
   createEFChain(args: EFConstructorArgs): Promise<EFChain>;
   getChain(address: Address): Promise<EFChain | undefined>;
   createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer>;
+
+  // Helpers for testing
+  randomAddress(): Address;
+  randomBlockId(): BlockId;
 }
