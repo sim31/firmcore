@@ -2,7 +2,7 @@ import chai from 'chai';
 import { firmcore as _firmcore, walletManager as _walletManager } from './hooks';
 import chaiAsPromised from 'chai-as-promised';
 import chaiSubset from 'chai-subset';
-import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices, newAddConfirmerOp, newConfirmer, newRemoveConfirmerOp, BlockId, EFBlockPOD, ConfirmerOp, EFBreakoutResults, newEFBreakoutResults, newEFSubmitResultsMsg, newCreateAccountMsg, newAccount, newRemoveAccountMsg, newUpdateAccountMsg, newSetDirMsg } from '../src/ifirmcore';
+import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices, newAddConfirmerOp, newConfirmer, newRemoveConfirmerOp, BlockId, EFBlockPOD, ConfirmerOp, EFBreakoutResults, newEFBreakoutResults, newEFSubmitResultsMsg, newCreateAccountMsg, newAccount, newRemoveAccountMsg, newUpdateAccountMsg, newSetDirMsg, BlockConfirmer } from '../src/ifirmcore';
 import { IWallet, IWalletCreator, IWalletManager } from '../src/iwallet';
 import { sleep } from './helpers';
 import InvalidArgument from '../src/exceptions/InvalidArgument';
@@ -23,7 +23,7 @@ function confirmerCount(block: EFBlock) {
   return Object.values(block.state.confirmerSet.confirmers).length;
 }
 
-describe("FirmCore", function () {
+describe("IFirmCore", function () {
   before("initialization should be done", async function() {
     expect(_firmcore).to.not.be.undefined;
     expect(_walletManager).to.not.be.undefined;
@@ -517,6 +517,92 @@ describe("FirmCore", function () {
           });
 
         });
+      });
+    });
+  });
+
+  describe("createWalletConfirmer", function() {
+    let blConfirmers: BlockConfirmer[] = [];
+    
+    it("should create BlockConfirmer(s)", async function() {
+      for (const wallet of wallets) {
+        blConfirmers.push(await firmcore.createWalletConfirmer(wallet));
+      }
+    });
+
+    describe("BlockConfirmer", function() {
+      describe("confirm", function() {
+        let block: EFBlock;
+        before("block should be created", async function() {
+          const promise = chain.builder.createBlock(chain.headBlockId, 
+            [newSetDirMsg(firmcore.randomIPFSLink())],
+          );
+          await expect(promise).to.be.fulfilled;
+          block = await promise;
+        });
+
+        it("should record confirmations", async function() {
+          await expect(block.state.confirmations())
+            .to.eventually.be.empty;
+
+          await expect(blConfirmers[0]!.confirm(block.id)).to.be.fulfilled;
+
+          await expect(block.state.confirmations())
+            .to.eventually.contain(blConfirmers[0]!.address);
+
+          await expect(blConfirmers[1]!.confirm(block.id)).to.be.fulfilled;
+
+          await expect(block.state.confirmations())
+            .to.eventually.contain(blConfirmers[0]!.address)
+            .and.to.contain(blConfirmers[1]!.address);
+        });
+        it("should not allow confirming the same block twice by the same confirmer", async function() {
+          await expect(blConfirmers[2]!.confirm(block.id)).to.be.fulfilled;
+
+          await expect(block.state.confirmations())
+            .to.eventually.deep.equal(
+              [blConfirmers[0]!.address, blConfirmers[1]!.address, blConfirmers[2]!.address],
+            );
+
+          await expect(blConfirmers[2]!.confirm(block.id)).to.be.rejected;
+        });
+        it("should update confirmation status", async function() {
+          const oldStatus = await block.state.confirmationStatus();
+          expect(oldStatus).to.containSubset({
+            currentWeight: 3,
+            final: false,
+          });
+
+          await expect(blConfirmers[3]!.confirm(block.id)).to.be.fulfilled;
+
+          await expect(block.state.confirmationStatus())
+            .to.eventually.deep.equal({ ...oldStatus, currentWeight: 4 });
+        });
+        it("should finalize a block", async function() {
+          const oldStatus = await block.state.confirmationStatus();
+          expect(oldStatus).to.containSubset({
+            currentWeight: 4,
+            final: false,
+          });
+
+          const potentialWeight = confirmerCount(genesisBl);
+          const reqThreshold = expectedThreshold(potentialWeight);
+          for (let i = 4; i < reqThreshold; i++) {
+            await expect(blConfirmers[i]!.confirm(block.id)).to.be.fulfilled;
+          }
+
+          await expect(block.state.confirmationStatus())
+            .to.eventually.deep.equal({ 
+              currentWeight: reqThreshold,
+              potentialWeight,
+              threshold: reqThreshold,
+              final: true,
+            });
+        });
+      });
+
+      describe("execution", function() {
+        // TODO: Check each message
       });
     });
   });

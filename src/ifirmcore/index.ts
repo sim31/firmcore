@@ -257,6 +257,7 @@ export interface EFBlockBuilder {
 }
 
 export interface BlockConfirmer {
+  address: Address;
   confirm(blockId: BlockId): Promise<void>;
 }
 

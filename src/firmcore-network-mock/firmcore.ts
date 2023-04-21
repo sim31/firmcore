@@ -189,7 +189,7 @@ function _confirmStatusFromBlock(prevBlock: OptExtendedBlockValue, confirms: Add
   let weight = 0;
   let potentialWeight = 0;
   for (const conf of blSet.confirmers) {
-    if (conf.addr in confirms) {
+    if (confirms.includes(conf.addr)) {
       weight += conf.weight;
     }
     potentialWeight += conf.weight;
@@ -258,6 +258,7 @@ export class FirmCore implements IFirmCore {
       w = (wallet as unknown) as Wallet;
     }
     return {
+      address: wallet.getAddress(),
       confirm: async (blockId: BlockId) => {
         const block = blocks[blockId];        
         if (!block) {
@@ -275,15 +276,22 @@ export class FirmCore implements IFirmCore {
 
         const signature = await _signBlock(w, block);
 
-        const success = await chain.contract.extConfirm(
+        const rValue = await chain.contract.callStatic.extConfirm(
           block.header,
           wallet.getAddress(),
           signature,
         );
-
-        if (!success) {
+        if (!rValue) {
           throw new Error("Contract returned false");
         }
+
+        const tx = await chain.contract.extConfirm(
+          block.header,
+          wallet.getAddress(),
+          signature,
+        );
+        // Will throw if tx fails
+        await tx.wait()
 
         const bConfs = confirmations[blockId];
         if (!bConfs) {
