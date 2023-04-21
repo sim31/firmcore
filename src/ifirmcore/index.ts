@@ -222,7 +222,7 @@ export interface EFBlockBuilder {
   createUpdateConfirmersMsg(
     prevBlock: BlockId | EFBlock | EFBlockPOD,
     confirmerOps: ConfirmerOp[]
-  ): UpdateConfirmersMsg;
+  ): Promise<UpdateConfirmersMsg>;
 }
 
 export interface BlockConfirmer {

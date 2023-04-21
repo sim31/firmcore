@@ -2,7 +2,7 @@ import chai from 'chai';
 import { firmcore as _firmcore, walletManager as _walletManager } from './hooks';
 import chaiAsPromised from 'chai-as-promised';
 import chaiSubset from 'chai-subset';
-import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices } from '../src/ifirmcore';
+import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices, newAddConfirmerOp, newConfirmer, newRemoveConfirmerOp, BlockId, EFBlockPOD } from '../src/ifirmcore';
 import { IWallet, IWalletCreator, IWalletManager } from '../src/iwallet';
 import { sleep } from './helpers';
 import InvalidArgument from '../src/exceptions/InvalidArgument';
@@ -14,6 +14,14 @@ chai.use(chaiSubset);
 let firmcore: IFirmCore;
 let walletManager: IWalletManager;
 let newWallet: () => Promise<IWallet>;
+
+function expectedThreshold(confirmerCount: number) {
+  return Math.ceil((confirmerCount * 2) / 3) + 1;
+}
+
+function confirmerCount(block: EFBlock) {
+  return Object.values(block.state.confirmerSet.confirmers).length;
+}
 
 describe("FirmCore", function () {
   before("initialization should be done", async function() {
@@ -88,7 +96,6 @@ describe("FirmCore", function () {
       expect(chain.genesisBlockId).to.deep.equal(chain.headBlockId);
     });
 
-    // TODO: Checks for the state
     describe("genesis block", function() {
       it("should have null for previous block id", function() {
         expect(genesisBl.prevBlockId).to.be.equal(firmcore.NullBlockId);
@@ -119,7 +126,7 @@ describe("FirmCore", function () {
           it("should have a threshold of 2/3rds + 1 of confirmers", function() {
             const confSet = genesisBl.state.confirmerSet;
             const confCount = Object.values(confSet.confirmers).length;
-            const expThreshold = Math.ceil((confCount * 2) / 3) + 1;
+            const expThreshold = expectedThreshold(confCount);
             expect(confSet.threshold).to.be.equal(expThreshold);
           });
         })
@@ -241,64 +248,151 @@ describe("FirmCore", function () {
     // prevBlockId, recentts, expected height, specified msgs
     describe("EFBlockBuilder", function() {
       let block1: EFBlock;
-      before("create empty block", async function() {
-        const builder = chain.builder;
-        const promise1 = builder.createBlock(chain.headBlockId, []);
-        await expect(promise1).to.be.fulfilled;
-        block1 = await promise1;
-      });
-
-      it("should not change confirmer set", async function() {
-        const promise = block1.state.confirmationStatus();
-        await expect(promise).to.be.fulfilled;
-        const confStatus = await promise;
-        expect(confStatus).to.containSubset({
-          threshold: genesisBl.state.confirmerSet.threshold,
+      describe("empty block", function() {
+        before("create empty block", async function() {
+          const builder = chain.builder;
+          const promise1 = builder.createBlock(chain.headBlockId, []);
+          await expect(promise1).to.be.fulfilled;
+          block1 = await promise1;
         });
 
-        const confSet = block1.state.confirmerSet;
-        expect(confSet).to.deep.equal(genesisBl.state.confirmerSet);
-      });
-      it("should not have any confirmations in the beginning", async function() {
-        const promise = block1.state.confirmationStatus();
-        await expect(promise).to.be.fulfilled;
-        const confStatus = await promise;
-        const genesisBlSt = await genesisBl.state.confirmationStatus();
-        expect(confStatus).to.containSubset({
-          currentWeight: 0,
-          final: false,
-        });
+        it("should not change confirmer set", async function() {
+          const promise = block1.state.confirmationStatus();
+          await expect(promise).to.be.fulfilled;
+          const confStatus = await promise;
+          expect(confStatus).to.containSubset({
+            threshold: genesisBl.state.confirmerSet.threshold,
+          });
 
-        const promise2 = block1.state.confirmations();
+          const confSet = block1.state.confirmerSet;
+          expect(confSet).to.deep.equal(genesisBl.state.confirmerSet);
+        });
+        it("should not have any confirmations in the beginning", async function() {
+          const promise = block1.state.confirmationStatus();
+          await expect(promise).to.be.fulfilled;
+          const confStatus = await promise;
+          expect(confStatus).to.containSubset({
+            currentWeight: 0,
+            final: false,
+          });
+
+          const promise2 = block1.state.confirmations();
+          await expect(promise2).to.be.fulfilled;
+          const confirmations = await promise2;
+          expect(confirmations).to.be.empty;
+        });
+        it("should not extend the chain", async function() {
+          const slice = await chain.getSlice();
+          expect(slice).to.have.length(1);
+          
+          const podChain = await chain.getPODChain();
+          expect(podChain.blocks).to.have.length(1);
+
+          expect(chain.headBlockId).to.deep.equal(chain.genesisBlockId);
+        });
+        it("should set specified prevBlockId", function() {
+          expect(block1.prevBlockId).to.be.equal(chain.headBlockId);
+        });
+        it("should set expected height", function() {
+          expect(block1.height).to.be.equal(1);
+        });
+        it("should set recent enough timestamp", function() {
+          const now = new Date();
+          const minTime = new Date(now.getTime() - 5000);
+          expect(block1.timestamp).to.be.lessThan(now);
+          expect(block1.timestamp).to.be.greaterThanOrEqual(minTime);
+        });
+      });
+
+      async function testCreateUpdateConfirmersMsg(prevBlockArg: BlockId | EFBlock | EFBlockPOD) {
+        const confCount = confirmerCount(genesisBl);
+        const expThreshold = expectedThreshold(confCount);
+        expect(expThreshold)
+          .to.be.equal(5)
+          .and.to.be.equal(genesisBl.state.confirmerSet.threshold);
+
+        const confOps1 = [
+          newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+          newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+        ];
+        const promise = chain.builder.createUpdateConfirmersMsg(
+          prevBlockArg,
+          confOps1,
+        );
+        await expect(promise).to.be.fulfilled;
+        const msg = await promise;
+        expect(msg.ops).to.deep.equal(confOps1);
+        expect(msg.threshold).to.equal(expectedThreshold(confCount + 2));
+
+        const confs = Object.values(genesisBl.state.confirmerSet.confirmers);
+        const confOps2 = [
+          newRemoveConfirmerOp(confs[0]!),
+          newRemoveConfirmerOp(confs[1]!),
+          newRemoveConfirmerOp(confs[2]!),
+        ];
+        const promise2 = chain.builder.createUpdateConfirmersMsg(
+          prevBlockArg,
+          confOps2,
+        );
         await expect(promise2).to.be.fulfilled;
-        const confirmations = await promise2;
-        expect(confirmations).to.be.empty;
-      });
-      it("should not extend the chain", async function() {
-        const slice = await chain.getSlice();
-        expect(slice).to.have.length(1);
-        
-        const podChain = await chain.getPODChain();
-        expect(podChain.blocks).to.have.length(1);
+        const msg2 = await promise2;
+        expect(msg2.ops).to.deep.equal(confOps2);
+        expect(msg.threshold).to.equal(expectedThreshold(confCount - 2));
 
-        expect(chain.headBlockId).to.deep.equal(chain.genesisBlockId);
-      });
-      it("should set specified prevBlockId", function() {
-        expect(block1.prevBlockId).to.be.equal(chain.headBlockId);
-      });
-      it("should set expected height", function() {
-        expect(block1.height).to.be.equal(1);
-      });
-      it("should set recent enough timestamp", function() {
-        const now = new Date();
-        const minTime = new Date(now.getTime() - 5000);
-        expect(block1.timestamp).to.be.lessThan(now);
-        expect(block1.timestamp).to.be.greaterThanOrEqual(minTime);
+        const confOps3 = [
+          newRemoveConfirmerOp(confs[3]!),
+          newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+        ];
+        const promise3 = chain.builder.createUpdateConfirmersMsg(
+          prevBlockArg,
+          confOps3,
+        );
+        await expect(promise3).to.be.fulfilled;
+        const msg3 = await promise3;
+        expect(msg3.ops).to.deep.equal(confOps3);
+        expect(msg.threshold).to.equal(expThreshold);
+      }
+
+      describe("createUpdateConfirmersMsg(prevBlock: BlockId)", function() {
+        it("should return the same confirmerOps with adjusted threshold", async function() {
+          testCreateUpdateConfirmersMsg(chain.headBlockId);
+        });
       });
 
-      it("should set updateConfirmers message", async function() {
-                
-      })
+      describe("createUpdateConfirmersMsg(prevBlock: EFBlock)", function() {
+        it("should return the same confirmerOps with adjusted threshold", async function() {
+          const block = await chain.blockById(chain.headBlockId);
+          expect(block).to.not.be.undefined;
+          testCreateUpdateConfirmersMsg(block!);
+        });
+      });
+
+      describe("createUpdateConfirmersMsg(prevBlock: EFBlockPOD)", function() {
+        it("should return the same confirmerOps with adjusted threshold", async function() {
+          const podChain = await chain.getPODChain();
+          const headBlock = podChain.blocks[podChain.blocks.length-1];
+          expect(headBlock).to.not.be.undefined;
+          testCreateUpdateConfirmersMsg(headBlock!);
+        });
+      });
+
+      // describe("createUpdateConfirmersMsg(prevBlock: BlockId)", function() {
+
+      describe("block with 1 updateConfirmers message", function() {
+        // let block1: EFBlock;
+        // before("create a block with updateConfirmers message", async function() {
+        //   const builder = chain.builder;
+        //   const promise1 = builder.createBlock(
+        //     chain.headBlockId,
+        //     [
+        //       chain.builder.
+        //     ]
+        //   );
+        //   await expect(promise1).to.be.fulfilled;
+        //   block1 = await promise1;
+        // });
+
+      });
     });
 
     describe("blockById", function() {

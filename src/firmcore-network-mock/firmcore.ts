@@ -474,10 +474,10 @@ export class FirmCore implements IFirmCore {
     };
 
     const builder: EFBlockBuilder = {
-      createUpdateConfirmersMsg: (
+      createUpdateConfirmersMsg: async (
         prevBlock: BlockId | EFBlock | EFBlockPOD,
         confirmerOps: ConfirmerOp[],
-      ): UpdateConfirmersMsg => {
+      ): Promise<UpdateConfirmersMsg> => {
         let confMap: ConfirmerMap;
         if (typeof prevBlock === 'string') {
           const bl = blocks[prevBlock];          
