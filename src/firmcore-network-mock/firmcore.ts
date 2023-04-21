@@ -482,7 +482,7 @@ export class FirmCore implements IFirmCore {
         // TODO: Check if we have prevBlock
         const prevBlock = blocks[prevBlockId];
         const prevBlockNum = blockNums[prevBlockId];
-        if (!prevBlock || !prevBlockNum) {
+        if (!prevBlock || (prevBlockNum === undefined)) {
           throw new NotFound("Previous block not found");
         }
         const chain = chains[prevBlock.contract ?? 0];

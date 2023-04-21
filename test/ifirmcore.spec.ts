@@ -16,7 +16,7 @@ let walletManager: IWalletManager;
 let newWallet: () => Promise<IWallet>;
 
 describe("FirmCore", function () {
-  before("Initialization", async function() {
+  before("initialization should be done", async function() {
     expect(_firmcore).to.not.be.undefined;
     expect(_walletManager).to.not.be.undefined;
     firmcore = _firmcore!;
@@ -32,8 +32,7 @@ describe("FirmCore", function () {
   let constructorArgs: EFConstructorArgs;
   const wallets: IWallet[] = []
   const accounts: AccountWithAddress[] = []
-  let creationDate: Date;
-  before("Create a EdenPlusFractal chain", async function() {
+  before("EdenPlusFractal chain should be created", async function() {
     for (let i = 0; i < 6; i++) {
       const w = await newWallet();
       wallets.push(w);
@@ -44,7 +43,6 @@ describe("FirmCore", function () {
       ));
     }
 
-    creationDate = new Date();
     constructorArgs = newEFConstructorArgs(
       accounts,
       "Chain1",
@@ -56,20 +54,24 @@ describe("FirmCore", function () {
     chain = await chPromise;
   });
 
-  after("Shutdown", async function() {
+  let genesisBl: EFBlock;
+  before("genesis block should be retrieved", async function() {
+    const promise = chain.blockById(chain.genesisBlockId);
+    await expect(promise).to.eventually.not.be.undefined;
+    genesisBl = (await promise)!;
+  });
+
+  after("shutdown should be done", async function() {
     await expect(firmcore.shutDown()).to.be.fulfilled;
   });
 
-  describe("Initialization", function () {
+  describe("init", function () {
     it('should not allow running init() twice', async function() {
       await expect(firmcore.init()).to.be.rejected;
     });
   });
 
   describe("createEFChain", function() {
-    before(async function() {
-    });
-
     it("should set the name", function() {
       expect(chain.name).to.be.equal("Chain1");
     });
@@ -85,7 +87,24 @@ describe("FirmCore", function () {
     it("should have genesisBlock equal headBlock", function() {
       expect(chain.genesisBlockId).to.deep.equal(chain.headBlockId);
     });
-    
+
+    describe("genesis block", function() {
+      it("should have null for previous block id", function() {
+        expect(genesisBl.prevBlockId).to.be.equal(firmcore.NullBlockId);
+      });
+      it("should have genesisBlockId of the chain", function() {
+        expect(genesisBl.id).to.be.equal(chain.genesisBlockId);
+      });
+      it("should have a height of 0", function() {
+        expect(genesisBl.height).to.be.equal(0);
+      });
+      it("should have a recent timestamp", function() {
+        const now = new Date();
+        expect(genesisBl.timestamp).to.be.lessThan(now);
+        const minTime = new Date(now.getTime() - 60000); // -60s from now
+        expect(genesisBl.timestamp).to.be.greaterThanOrEqual(minTime);
+      });
+    })
   });
 
   describe("getChain", function() {
@@ -97,7 +116,7 @@ describe("FirmCore", function () {
       await expect(firmcore.getChain(addr)).to.eventually.be.undefined;
     });
 
-    it("should retrieve the same chain", async function() {
+    it("should retrieve the created chain", async function() {
       const promise = firmcore.getChain(chain.address);
       await expect(promise).to.be.fulfilled;
       const retrievedChain = await promise;
@@ -131,9 +150,9 @@ describe("FirmCore", function () {
       });
       it("should set recent enough timestamp", function() {
         const now = new Date();
-        const minTime = new Date(creationDate.getTime() - 5000);
-        expect(block1.timestamp).to.be.greaterThanOrEqual(minTime);
+        const minTime = new Date(now.getTime() - 5000);
         expect(block1.timestamp).to.be.lessThan(now);
+        expect(block1.timestamp).to.be.greaterThanOrEqual(minTime);
       });
 
       it("should set updateConfirmers message", async function() {
@@ -149,30 +168,6 @@ describe("FirmCore", function () {
         await expect(chain.blockById(firmcore.randomBlockId())).to.eventually.be.undefined;
       });
       
-      describe("genesis block", function() {
-        let block: EFBlock;
-        before("should be returned", async function() {
-          const promise = chain.blockById(chain.genesisBlockId);
-          await expect(promise).to.eventually.not.be.undefined;
-          block = (await promise)!;
-        });
-
-        it("should have null for previous block id", function() {
-          expect(block.prevBlockId).to.be.equal(firmcore.NullBlockId);
-        });
-        it("should have genesisBlockId of the chain", function() {
-          expect(block.id).to.be.equal(chain.genesisBlockId);
-        });
-        it("should have a height of 0", function() {
-          expect(block.height).to.be.equal(0);
-        });
-        it("should have a recent timestamp", function() {
-          expect(block.timestamp).to.be.greaterThanOrEqual(creationDate);
-          const maxTime = new Date(creationDate.getTime() + 10000); // +10s
-          expect(block.timestamp).to.be.lessThan(maxTime);
-        });
-      })
-
       describe("next block", function() {
         let block1: EFBlock;
         let rBlock1: EFBlock;
