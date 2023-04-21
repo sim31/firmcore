@@ -116,9 +116,25 @@ export interface RespectAccessor extends FirmAccountSystemAccessor {
 export interface FractalBreakoutResult {
   ranks: readonly [OptAccountId, OptAccountId, OptAccountId, OptAccountId, OptAccountId, OptAccountId];
 }
+export function newFractalBreakoutResult(
+  rank1?: AccountId, rank2?: AccountId, rank3?: AccountId,
+  rank4?: AccountId, rank5?: AccountId, rank6?: AccountId,
+): FractalBreakoutResult {
+  return { ranks: [rank1, rank2, rank3, rank4, rank5, rank6] };
+}
 
 export interface EFBreakoutResults extends FractalBreakoutResult {
   delegate: AccountId;
+}
+export function newEFBreakoutResults(
+  delegate: AccountId,
+  rank1?: AccountId, rank2?: AccountId, rank3?: AccountId,
+  rank4?: AccountId, rank5?: AccountId, rank6?: AccountId,
+): EFBreakoutResults {
+  return {
+    delegate,
+    ranks: [rank1, rank2, rank3, rank4, rank5, rank6]
+  };
 }
 
 export type RoomNumber = number;
@@ -148,10 +164,16 @@ export interface EFSubmitResultsMsg extends Msg {
   readonly name: 'efSubmitResults';
   results: EFBreakoutResults[];
 }
+export function newEFSubmitResultsMsg(results: EFBreakoutResults[]): EFSubmitResultsMsg {
+  return { name: 'efSubmitResults', results };
+}
 
 export interface SetDirMsg extends Msg {
   readonly name: 'setDir';
   dir: IPFSLink;
+}
+export function newSetDirMsg(dir: IPFSLink): SetDirMsg {
+  return { name: 'setDir', dir };
 }
 
 export type ConfirmerOpId = 'add' | 'remove';
@@ -186,10 +208,16 @@ export interface CreateAccountMsg extends Msg {
   readonly name: 'createAccount';
   account: Account;
 }
+export function newCreateAccountMsg(account: Account): CreateAccountMsg {
+  return { name: 'createAccount', account };
+}
 
 export interface RemoveAccountMsg extends Msg {
   readonly name: 'removeAccount';
   accountId: AccountId;
+}
+export function newRemoveAccountMsg(accountId: AccountId): RemoveAccountMsg {
+  return { name: 'removeAccount', accountId };
 }
 
 export interface UpdateAccountMsg extends Msg {
@@ -197,11 +225,14 @@ export interface UpdateAccountMsg extends Msg {
   accountId: AccountId;
   newAccount: Account;
 }
+export function newUpdateAccountMsg(accountId: AccountId, newAccount: Account): UpdateAccountMsg {
+  return { name: 'updateAccount', accountId, newAccount };
+
+}
 
 export type EFMsg =
   CreateAccountMsg | RemoveAccountMsg | UpdateAccountMsg | 
   UpdateConfirmersMsg | SetDirMsg | EFSubmitResultsMsg;
-
 
 export interface EFBlock {
   id: BlockId;
@@ -328,4 +359,5 @@ export interface IFirmCore {
   // Helpers for testing
   randomAddress(): Address;
   randomBlockId(): BlockId;
+  randomIPFSLink(): IPFSLink;
 }

@@ -630,4 +630,8 @@ export class FirmCore implements IFirmCore {
     return randomBytes32Hex();    
   }
 
+  randomIPFSLink(): IPFSLink {
+    return randomBytes32Hex();    
+  }
+
 }

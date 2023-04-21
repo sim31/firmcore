@@ -2,14 +2,14 @@ import chai from 'chai';
 import { firmcore as _firmcore, walletManager as _walletManager } from './hooks';
 import chaiAsPromised from 'chai-as-promised';
 import chaiSubset from 'chai-subset';
-import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices, newAddConfirmerOp, newConfirmer, newRemoveConfirmerOp, BlockId, EFBlockPOD } from '../src/ifirmcore';
+import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices, newAddConfirmerOp, newConfirmer, newRemoveConfirmerOp, BlockId, EFBlockPOD, ConfirmerOp, EFBreakoutResults, newEFBreakoutResults, newEFSubmitResultsMsg, newCreateAccountMsg, newAccount, newRemoveAccountMsg, newUpdateAccountMsg, newSetDirMsg } from '../src/ifirmcore';
 import { IWallet, IWalletCreator, IWalletManager } from '../src/iwallet';
 import { sleep } from './helpers';
 import InvalidArgument from '../src/exceptions/InvalidArgument';
 
+chai.use(chaiSubset);
 chai.use(chaiAsPromised);
 const expect = chai.expect;
-chai.use(chaiSubset);
 
 let firmcore: IFirmCore;
 let walletManager: IWalletManager;
@@ -41,7 +41,7 @@ describe("FirmCore", function () {
   const wallets: IWallet[] = []
   const accounts: AccountWithAddress[] = []
   before("EdenPlusFractal chain should be created", async function() {
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 10; i++) {
       const w = await newWallet();
       wallets.push(w);
       accounts.push(newAccountWithAddress(
@@ -67,6 +67,15 @@ describe("FirmCore", function () {
     const promise = chain.blockById(chain.genesisBlockId);
     await expect(promise).to.eventually.not.be.undefined;
     genesisBl = (await promise)!;
+  });
+
+  let accountIds: AccountId[] = [];
+  before("account ids should be known", async function() {
+    for (const acc of constructorArgs.confirmers) {
+      const rAcc = await genesisBl.state.accountByAddress(acc.address);
+      expect(rAcc).to.not.be.undefined;
+      accountIds.push(rAcc!.id);
+    }
   });
 
   after("shutdown should be done", async function() {
@@ -172,18 +181,9 @@ describe("FirmCore", function () {
         });
 
         describe("accountById", function() {
-          let ids: AccountId[] = [];
-          before("account ids should be known", async function() {
-            for (const acc of constructorArgs.confirmers) {
-              const rAcc = await genesisBl.state.accountByAddress(acc.address);
-              expect(rAcc).to.not.be.undefined;
-              ids.push(rAcc!.id);
-            }
-          });
-
           it("should return accounts specified in constructor args", async function() {
-            for (let i = 0; i < ids.length; i++) {
-              const promise = genesisBl.state.accountById(ids[i]!);
+            for (let i = 0; i < accountIds.length; i++) {
+              const promise = genesisBl.state.accountById(accountIds[i]!);
               await expect(promise).to.eventually.not.be.undefined;
               const rAcc = (await promise)!;
               expect(rAcc).to.containSubset({ ...accounts[i], id: rAcc.id });
@@ -376,22 +376,112 @@ describe("FirmCore", function () {
         });
       });
 
-      // describe("createUpdateConfirmersMsg(prevBlock: BlockId)", function() {
-
       describe("block with 1 updateConfirmers message", function() {
-        // let block1: EFBlock;
-        // before("create a block with updateConfirmers message", async function() {
-        //   const builder = chain.builder;
-        //   const promise1 = builder.createBlock(
-        //     chain.headBlockId,
-        //     [
-        //       chain.builder.
-        //     ]
-        //   );
-        //   await expect(promise1).to.be.fulfilled;
-        //   block1 = await promise1;
-        // });
+        it("should create a block with updateConfirmers message", async function() {
+          const builder = chain.builder;
+          const confs = Object.values(genesisBl.state.confirmerSet.confirmers);
+          const confOps = [
+            newRemoveConfirmerOp(confs[3]!),
+            newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+            newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+            newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+          ];
+          const msg = await builder.createUpdateConfirmersMsg(chain.headBlockId, confOps);
+          const promise1 = builder.createBlock(
+            chain.headBlockId,
+            [msg]
+          );
+          await expect(promise1).to.be.fulfilled;
+          block1 = await promise1;
 
+          expect(block1.msgs[0]).to.deep.equal(msg);
+        });
+      });
+
+      describe("block with EFSubmitResults message", function() {
+        it("should create a block with EFSubmitResults message", async function() {
+          const builder = chain.builder;
+
+          const results: EFBreakoutResults[] = [
+            newEFBreakoutResults(accountIds[1]!, accountIds[2], accountIds[1], accountIds[0], accountIds[3], accountIds[4]),
+            newEFBreakoutResults(accountIds[5]!, accountIds[6], accountIds[5], accountIds[7], accountIds[8], accountIds[9]),
+          ] 
+
+          const msg = newEFSubmitResultsMsg(results)
+          const promise = builder.createBlock(
+            chain.headBlockId,
+            [msg],
+          );
+          await expect(promise).to.be.fulfilled;
+          const block = await promise;
+
+          expect(block.msgs[0]).to.deep.equal(msg);
+        });
+      });
+
+      describe("block with CreateAccountMsg", function() {
+        it("should create a block with CreateAccountMsg", async function() {
+          const msg = newCreateAccountMsg(newAccount({ testPlatform: 'as' }));
+          const promise = chain.builder.createBlock(chain.headBlockId, [msg]);
+          await expect(promise).to.be.fulfilled;
+          const block = await promise
+          expect(block.msgs[0]).to.deep.equal(msg);
+        });
+      });
+
+      describe("block with RemoveAccountMsg", function() {
+        it("should create a block with RemoveAccountMsg", async function() {
+          const msg = newRemoveAccountMsg(accountIds[0]!);
+          const block = chain.builder.createBlock(chain.headBlockId, [msg]);
+          expect(block.then((block) => block.msgs[0]))
+            .to.eventually.deep.equal(msg);
+        });
+      });
+
+      describe("block with UpdateAccountMsg", function() {
+        it("should create a block with updateAccountMsg", async function() {
+          const msg = newUpdateAccountMsg(accountIds[3]!, newAccount({ somePlatform: 'acc' }));
+          const block = chain.builder.createBlock(chain.headBlockId, [msg]);
+          expect(block.then(block => block.msgs[0]))
+            .to.eventually.deep.equal(msg);
+        });
+      });
+
+      describe("block with SetDirMsg", function() {
+        it("should create a block with SetDirMsg", async function() {
+          const msg = newSetDirMsg(firmcore.randomIPFSLink());
+          const block = chain.builder.createBlock(chain.headBlockId, [msg]);
+          expect(block.then(block => block.msgs[0]))
+            .to.eventually.deep.equal(msg);
+        });
+      });
+
+      describe("blocks with multiple messages", function() {
+        it("should create a block with specified messages", async function() {
+          const builder = chain.builder;
+          const confs = Object.values(genesisBl.state.confirmerSet.confirmers);
+          const confOps = [
+            newRemoveConfirmerOp(confs[3]!),
+            newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+            newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+            newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
+          ];
+          const msgs = [
+            await builder.createUpdateConfirmersMsg(chain.headBlockId, confOps),
+            newSetDirMsg(firmcore.randomIPFSLink()),
+            newRemoveAccountMsg(accountIds[6]!),
+            newEFSubmitResultsMsg([
+              newEFBreakoutResults(
+                accountIds[0]!,
+                accountIds[1], accountIds[2], accountIds[3], accountIds[4]
+              ),
+            ]),
+          ];
+
+          const promise = chain.builder.createBlock(chain.headBlockId, msgs);
+
+          expect(promise.then(block => block.msgs)).to.eventually.deep.equal(msgs);
+        });
       });
     });
 
@@ -428,12 +518,6 @@ describe("FirmCore", function () {
 
         });
       });
-    });
-  });
-
-  describe("EFBlockBuilder", function() {
-    it("should create a block that changes confirmers", async function() {
-            
     });
   });
 });
