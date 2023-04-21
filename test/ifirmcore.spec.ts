@@ -2,10 +2,10 @@ import chai from 'chai';
 import { firmcore as _firmcore, walletManager as _walletManager } from './hooks';
 import chaiAsPromised from 'chai-as-promised';
 import chaiSubset from 'chai-subset';
-import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock } from '../src/ifirmcore';
+import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices } from '../src/ifirmcore';
 import { IWallet, IWalletCreator, IWalletManager } from '../src/iwallet';
-import { time } from 'console';
 import { sleep } from './helpers';
+import InvalidArgument from '../src/exceptions/InvalidArgument';
 
 chai.use(chaiAsPromised);
 const expect = chai.expect;
@@ -88,6 +88,7 @@ describe("FirmCore", function () {
       expect(chain.genesisBlockId).to.deep.equal(chain.headBlockId);
     });
 
+    // TODO: Checks for the state
     describe("genesis block", function() {
       it("should have null for previous block id", function() {
         expect(genesisBl.prevBlockId).to.be.equal(firmcore.NullBlockId);
@@ -104,7 +105,112 @@ describe("FirmCore", function () {
         const minTime = new Date(now.getTime() - 60000); // -60s from now
         expect(genesisBl.timestamp).to.be.greaterThanOrEqual(minTime);
       });
-    })
+
+      describe("state", function() {
+        describe("confirmerSet", function() {
+          it("should have accounts from constructorArgs and they should all have weight of 1", function() {
+            for (const acc of accounts) {
+              expect(genesisBl.state.confirmerSet.confirmers)
+                .to.containSubset({
+                  [acc.address]: { address: acc.address, weight: 1 }
+                });
+            }
+          });
+          it("should have a threshold of 2/3rds + 1 of confirmers", function() {
+            const confSet = genesisBl.state.confirmerSet;
+            const confCount = Object.values(confSet.confirmers).length;
+            const expThreshold = Math.ceil((confCount * 2) / 3) + 1;
+            expect(confSet.threshold).to.be.equal(expThreshold);
+          });
+        })
+        
+        describe("confirmations", function() {
+          it("should have no confirmations", async function() {
+            const promise = genesisBl.state.confirmations();
+            await expect(promise).to.be.fulfilled;
+            const confs = await promise;
+            expect(confs).to.be.empty;
+          });
+        });
+
+        describe("confirmationStatus", function() {
+          let confStatus: ConfirmationStatus;
+          before("confirmationStatus should be retrieved", async function() {
+            const promise = genesisBl.state.confirmationStatus();
+            await expect(promise).to.be.fulfilled;
+            confStatus = await promise;
+          });
+
+          it("should be final", function() {
+            expect(confStatus.final).to.be.true;
+          });
+        });
+
+        describe("directoryId", function() {
+          it("should return undefined", async function() {
+            await expect(genesisBl.state.directoryId()).to.eventually.be.undefined;
+          });
+        });
+
+        describe("accountByAddress", function() {
+          // TODO: check that it does not contain any extra accounts?
+          it("should return accounts specified in constructor args", async function() {
+            for (const acc of constructorArgs.confirmers) {
+              const promise = genesisBl.state.accountByAddress(acc.address);
+              await expect(promise).to.eventually.not.be.undefined;
+              const rAcc = (await promise)!;
+              expect(rAcc).to.containSubset({ ...acc, id: rAcc.id });              
+            }            
+          });
+        });
+
+        describe("accountById", function() {
+          let ids: AccountId[] = [];
+          before("account ids should be known", async function() {
+            for (const acc of constructorArgs.confirmers) {
+              const rAcc = await genesisBl.state.accountByAddress(acc.address);
+              expect(rAcc).to.not.be.undefined;
+              ids.push(rAcc!.id);
+            }
+          });
+
+          it("should return accounts specified in constructor args", async function() {
+            for (let i = 0; i < ids.length; i++) {
+              const promise = genesisBl.state.accountById(ids[i]!);
+              await expect(promise).to.eventually.not.be.undefined;
+              const rAcc = (await promise)!;
+              expect(rAcc).to.containSubset({ ...accounts[i], id: rAcc.id });
+            }
+          });
+        });
+
+        describe("totalSupply", function() {
+          it("should be zero", async function() {
+            const promise = genesisBl.state.totalSupply();
+            await expect(promise).to.eventually.be.equal(0);
+          });
+        });
+
+        describe("delegates", function() {
+          it("should return undefined for all weeks", async function() {
+            for (const weekIndex of weekIndices) {
+              await expect(genesisBl.state.delegates(weekIndex)).to.eventually.be.undefined;
+            }
+          });
+        });
+
+        describe("delegate", function() {
+          it("should throw for all rooms in all weeks", async function() {
+            for (const weekIndex of weekIndices) {
+              for (let roomNumber = 0; roomNumber < 10; roomNumber++) {
+                await expect(genesisBl.state.delegate(weekIndex, roomNumber))
+                  .to.eventually.be.rejected;
+              }
+            }
+          });
+        });
+      });
+    });
   });
 
   describe("getChain", function() {
@@ -138,10 +244,45 @@ describe("FirmCore", function () {
       before("create empty block", async function() {
         const builder = chain.builder;
         const promise1 = builder.createBlock(chain.headBlockId, []);
-        expect(promise1).to.be.fulfilled;
+        await expect(promise1).to.be.fulfilled;
         block1 = await promise1;
       });
 
+      it("should not change confirmer set", async function() {
+        const promise = block1.state.confirmationStatus();
+        await expect(promise).to.be.fulfilled;
+        const confStatus = await promise;
+        expect(confStatus).to.containSubset({
+          threshold: genesisBl.state.confirmerSet.threshold,
+        });
+
+        const confSet = block1.state.confirmerSet;
+        expect(confSet).to.deep.equal(genesisBl.state.confirmerSet);
+      });
+      it("should not have any confirmations in the beginning", async function() {
+        const promise = block1.state.confirmationStatus();
+        await expect(promise).to.be.fulfilled;
+        const confStatus = await promise;
+        const genesisBlSt = await genesisBl.state.confirmationStatus();
+        expect(confStatus).to.containSubset({
+          currentWeight: 0,
+          final: false,
+        });
+
+        const promise2 = block1.state.confirmations();
+        await expect(promise2).to.be.fulfilled;
+        const confirmations = await promise2;
+        expect(confirmations).to.be.empty;
+      });
+      it("should not extend the chain", async function() {
+        const slice = await chain.getSlice();
+        expect(slice).to.have.length(1);
+        
+        const podChain = await chain.getPODChain();
+        expect(podChain.blocks).to.have.length(1);
+
+        expect(chain.headBlockId).to.deep.equal(chain.genesisBlockId);
+      });
       it("should set specified prevBlockId", function() {
         expect(block1.prevBlockId).to.be.equal(chain.headBlockId);
       });
@@ -174,12 +315,12 @@ describe("FirmCore", function () {
         before("create a new block", async function() {
           const builder = chain.builder;
           const promise1 = builder.createBlock(chain.headBlockId, []);
-          expect(promise1).to.be.fulfilled;
+          await expect(promise1).to.be.fulfilled;
           block1 = await promise1;
         });
         before("should be returned", async function() {
           const promise1 = chain.blockById(block1.id);
-          expect(promise1).to.eventually.be.not.undefined;
+          await expect(promise1).to.eventually.be.not.undefined;
           rBlock1 = (await promise1)!;
         });
 

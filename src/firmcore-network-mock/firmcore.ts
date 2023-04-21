@@ -2,7 +2,7 @@ import { Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature } from "firmcontracts/interface/types";
 import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD } from "../ifirmcore";
 import ganache, { EthereumProvider } from "ganache";
-import { BigNumber, ethers } from "ethers";
+import { BigNumber, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain";
 import { getBlockDigest, getBlockId, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi";
 import { ZeroAddr, ConfirmerSet as FcConfirmerSet  } from 'firmcontracts/interface/types';
@@ -167,7 +167,7 @@ async function _getAccountById(chain: Chain, accountId: AccountId): Promise<Acco
       extAccounts: {},
     }
   } else {
-    return fullAccount;
+    return { ...fullAccount, id: accountId };
   }
 }
 
@@ -184,8 +184,8 @@ function _confirmerSetFromBlock(block: OptExtendedBlockValue): ConfirmerSet {
   };
 }
 
-function _confirmStatusFromBlock(block: OptExtendedBlockValue, confirms: Address[]): ConfirmationStatus {
-  const blSet = block.state.confirmerSet;
+function _confirmStatusFromBlock(prevBlock: OptExtendedBlockValue, confirms: Address[]): ConfirmationStatus {
+  const blSet = prevBlock.state.confirmerSet;
   let weight = 0;
   let potentialWeight = 0;
   for (const conf of blSet.confirmers) {
@@ -267,6 +267,12 @@ export class FirmCore implements IFirmCore {
         if (!chain) {
           throw new NotFound("Chain not found");
         }
+
+        const ordBlocks = orderedBlocks[chain.contract.address];
+        if (!ordBlocks) {
+          throw new ProgrammingError("Block not saved into orderedBlocks index");
+        }
+
         const signature = await _signBlock(w, block);
 
         const success = await chain.contract.extConfirm(
@@ -288,6 +294,7 @@ export class FirmCore implements IFirmCore {
         const confirmStatus = _confirmStatusFromBlock(block, bConfs);
         if (confirmStatus.final) {
           await chain.contract.finalizeAndExecute(block);
+          ordBlocks.push(blockId);
         }
       }
     };
@@ -371,7 +378,22 @@ export class FirmCore implements IFirmCore {
               if (!confs) {
                 reject(new NotFound("Confirmation object not found"));
               } else {
-                resolve(_confirmStatusFromBlock(block, confs));
+                if (block.header.prevBlockId === ZeroId) {
+                  // Means it's the first block
+                  resolve({
+                    currentWeight: 0,
+                    potentialWeight: 0,
+                    threshold: 0,
+                    final: true,
+                  });
+                } else {
+                  const prevBlock = blocks[utils.hexlify(block.header.prevBlockId)];
+                  if (!prevBlock) {
+                    reject(new ProgrammingError("Previous block not recorded"));
+                  } else {
+                    resolve(_confirmStatusFromBlock(prevBlock, confs));
+                  }
+                }
               }
             });
           },
@@ -489,10 +511,6 @@ export class FirmCore implements IFirmCore {
         if (!chain) {
           throw new NotFound("Chain not found");
         }
-        const ordBlocks = orderedBlocks[chain.contract.address];
-        if (!ordBlocks) {
-          throw new ProgrammingError("Block not saved into orderedBlocks index");
-        }
 
         const serializedMsgs: Message[] = [];
         let confOps: ConfirmerOpValue[] | undefined;
@@ -556,7 +574,6 @@ export class FirmCore implements IFirmCore {
         const bId = getBlockId(block.header);
         blocks[bId] = block;
         blockNums[bId] = prevBlockNum + 1;
-        ordBlocks.push(bId);
         msgs[bId] = messages;
         confirmations[bId] = [];
 
@@ -593,14 +610,14 @@ export class FirmCore implements IFirmCore {
       constructorArgs: chain.constructorArgs,
       blockById,
       getSlice,
-      getPODSlice: undefined!, // Created in the next statement
+      getPODChain: undefined!, // Created in the next statement
       name: chain.constructorArgs.name,
       symbol: chain.constructorArgs.symbol,
       address: chain.contract.address,
       genesisBlockId: chain.genesisBlId,
       headBlockId: chain.headBlockId,
     };
-    efChain.getPODSlice = toEFChainPODSlice.bind(efChain, efChain);
+    efChain.getPODChain = toEFChainPODSlice.bind(efChain, efChain);
 
     return efChain;
   }

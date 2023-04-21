@@ -47,9 +47,9 @@ export interface ConfirmationStatus {
 }
 
 export interface ChainState {
-  confirmerSet: ConfirmerSet;
-  confirmations: Address[];
-  confirmationStatus: ConfirmationStatus;
+  confirmerSet: ConfirmerSet; // This defines requirements for confirming the next block
+  confirmations: Address[];   // These are confirmations of this block
+  confirmationStatus: ConfirmationStatus; // This is confirmation status of this block
 }
 
 export interface ChainAccessor {
@@ -269,7 +269,7 @@ export interface EFChain extends RespectChain {
   
   getSlice(start?: number, end?: number): Promise<EFBlock[]>;
 
-  getPODSlice(start?: number, end?: number): Promise<EFChainPODSlice>;
+  getPODChain(start?: number, end?: number): Promise<EFChainPODSlice>;
 }
 
 export async function getAllDelegates(block: EFBlock): Promise<Delegates> {
