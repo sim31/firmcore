@@ -301,8 +301,16 @@ export class FirmCore implements IFirmCore {
 
         const confirmStatus = _confirmStatusFromBlock(block, bConfs);
         if (confirmStatus.final) {
+          // console.log("headBlock: ", await chain.contract.getHead());
+          // console.log("getBlockId(block): ", getBlockId(block.header));
           await chain.contract.finalizeAndExecute(block);
           ordBlocks.push(blockId);
+          const head = await chain.contract.getHead();
+          assert(head === blockId, "head of the chain should have been updated");
+          // console.log("headBlock2: ", await chain.contract.getHead());
+          // console.log("head: ", head);
+          // console.log("blockId: ", blockId);
+          chain.headBlockId = head;
         }
       }
     };
@@ -623,7 +631,7 @@ export class FirmCore implements IFirmCore {
       symbol: chain.constructorArgs.symbol,
       address: chain.contract.address,
       genesisBlockId: chain.genesisBlId,
-      headBlockId: chain.headBlockId,
+      headBlockId: () => chain.contract.getHead(),
     };
     efChain.getPODChain = toEFChainPODSlice.bind(efChain, efChain);
 

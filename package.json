@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Core of firmament node",
   "scripts": {
-    "test": "mocha -n loader=ts-node/esm --extension ts --timeout 15000 --require test/hooks.ts",
+    "test": "mocha -n loader=ts-node/esm --extension ts --timeout 20000 --require test/hooks.ts",
     "prepare": "npm test"
   },
   "repository": {

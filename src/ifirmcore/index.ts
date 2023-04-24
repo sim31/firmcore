@@ -34,7 +34,8 @@ export interface Chain {
   name?: string;
   symbol?: string;
   genesisBlockId: BlockId;
-  headBlockId: BlockId;
+
+  headBlockId: () => Promise<BlockId>;
 
   //getBlock(id: BlockId): Promise<Blo
 }
@@ -288,7 +289,7 @@ export function newEFConstructorArgs(
 }
 
 
-export interface EFChainPODSlice {
+export interface EFChainPODSlice extends Omit<RespectChain, 'headBlockId'> {
   constructorArgs: EFConstructorArgs;
   blocks: EFBlockPOD[];
 }
@@ -342,7 +343,11 @@ export async function toEFChainPODSlice(
   }
   return {
     constructorArgs: chain.constructorArgs,
-    blocks: blockPods
+    blocks: blockPods,
+    symbol: chain.symbol,
+    address: chain.address,
+    name: chain.name,
+    genesisBlockId: chain.genesisBlockId,
   };
 }
 

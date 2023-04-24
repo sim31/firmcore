@@ -23,6 +23,14 @@ function confirmerCount(block: EFBlock) {
   return Object.values(block.state.confirmerSet.confirmers).length;
 }
 
+async function confirmAndExecute(block: EFBlock, confirmers: BlockConfirmer[]) {
+  const potentialWeight = confirmerCount(block);
+  const reqThreshold = expectedThreshold(potentialWeight);
+  for (let i = 0; i < reqThreshold; i++) {
+    await expect(confirmers[i]!.confirm(block.id)).to.be.fulfilled;
+  }
+}
+
 describe("IFirmCore", function () {
   before("initialization should be done", async function() {
     expect(_firmcore).to.not.be.undefined;
@@ -101,8 +109,8 @@ describe("IFirmCore", function () {
       expect(chain.constructorArgs).to.deep.equal(constructorArgs);
     });
     
-    it("should have genesisBlock equal headBlock", function() {
-      expect(chain.genesisBlockId).to.deep.equal(chain.headBlockId);
+    it("should have genesisBlock equal headBlock", async function() {
+      expect(chain.genesisBlockId).to.deep.equal(await chain.headBlockId());
     });
 
     describe("genesis block", function() {
@@ -248,10 +256,14 @@ describe("IFirmCore", function () {
     // prevBlockId, recentts, expected height, specified msgs
     describe("EFBlockBuilder", function() {
       let block1: EFBlock;
+      let headId: BlockId;
+      before("should know head block id", async function() {
+        headId = await chain.headBlockId();
+      });
       describe("empty block", function() {
         before("create empty block", async function() {
           const builder = chain.builder;
-          const promise1 = builder.createBlock(chain.headBlockId, []);
+          const promise1 = builder.createBlock(headId, []);
           await expect(promise1).to.be.fulfilled;
           block1 = await promise1;
         });
@@ -288,10 +300,10 @@ describe("IFirmCore", function () {
           const podChain = await chain.getPODChain();
           expect(podChain.blocks).to.have.length(1);
 
-          expect(chain.headBlockId).to.deep.equal(chain.genesisBlockId);
+          expect(await chain.headBlockId()).to.deep.equal(chain.genesisBlockId);
         });
-        it("should set specified prevBlockId", function() {
-          expect(block1.prevBlockId).to.be.equal(chain.headBlockId);
+        it("should set specified prevBlockId", async function() {
+          expect(block1.prevBlockId).to.be.equal(await chain.headBlockId());
         });
         it("should set expected height", function() {
           expect(block1.height).to.be.equal(1);
@@ -355,13 +367,13 @@ describe("IFirmCore", function () {
 
       describe("createUpdateConfirmersMsg(prevBlock: BlockId)", function() {
         it("should return the same confirmerOps with adjusted threshold", async function() {
-          testCreateUpdateConfirmersMsg(chain.headBlockId);
+          testCreateUpdateConfirmersMsg(headId);
         });
       });
 
       describe("createUpdateConfirmersMsg(prevBlock: EFBlock)", function() {
         it("should return the same confirmerOps with adjusted threshold", async function() {
-          const block = await chain.blockById(chain.headBlockId);
+          const block = await chain.blockById(headId);
           expect(block).to.not.be.undefined;
           testCreateUpdateConfirmersMsg(block!);
         });
@@ -386,9 +398,9 @@ describe("IFirmCore", function () {
             newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
             newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
           ];
-          const msg = await builder.createUpdateConfirmersMsg(chain.headBlockId, confOps);
+          const msg = await builder.createUpdateConfirmersMsg(headId, confOps);
           const promise1 = builder.createBlock(
-            chain.headBlockId,
+            headId,
             [msg]
           );
           await expect(promise1).to.be.fulfilled;
@@ -409,7 +421,7 @@ describe("IFirmCore", function () {
 
           const msg = newEFSubmitResultsMsg(results)
           const promise = builder.createBlock(
-            chain.headBlockId,
+            headId,
             [msg],
           );
           await expect(promise).to.be.fulfilled;
@@ -422,7 +434,7 @@ describe("IFirmCore", function () {
       describe("block with CreateAccountMsg", function() {
         it("should create a block with CreateAccountMsg", async function() {
           const msg = newCreateAccountMsg(newAccount({ testPlatform: 'as' }));
-          const promise = chain.builder.createBlock(chain.headBlockId, [msg]);
+          const promise = chain.builder.createBlock(headId, [msg]);
           await expect(promise).to.be.fulfilled;
           const block = await promise
           expect(block.msgs[0]).to.deep.equal(msg);
@@ -432,7 +444,7 @@ describe("IFirmCore", function () {
       describe("block with RemoveAccountMsg", function() {
         it("should create a block with RemoveAccountMsg", async function() {
           const msg = newRemoveAccountMsg(accountIds[0]!);
-          const block = chain.builder.createBlock(chain.headBlockId, [msg]);
+          const block = chain.builder.createBlock(headId, [msg]);
           expect(block.then((block) => block.msgs[0]))
             .to.eventually.deep.equal(msg);
         });
@@ -441,7 +453,7 @@ describe("IFirmCore", function () {
       describe("block with UpdateAccountMsg", function() {
         it("should create a block with updateAccountMsg", async function() {
           const msg = newUpdateAccountMsg(accountIds[3]!, newAccount({ somePlatform: 'acc' }));
-          const block = chain.builder.createBlock(chain.headBlockId, [msg]);
+          const block = chain.builder.createBlock(headId, [msg]);
           expect(block.then(block => block.msgs[0]))
             .to.eventually.deep.equal(msg);
         });
@@ -450,7 +462,7 @@ describe("IFirmCore", function () {
       describe("block with SetDirMsg", function() {
         it("should create a block with SetDirMsg", async function() {
           const msg = newSetDirMsg(firmcore.randomIPFSLink());
-          const block = chain.builder.createBlock(chain.headBlockId, [msg]);
+          const block = chain.builder.createBlock(headId, [msg]);
           expect(block.then(block => block.msgs[0]))
             .to.eventually.deep.equal(msg);
         });
@@ -467,7 +479,7 @@ describe("IFirmCore", function () {
             newAddConfirmerOp(newConfirmer((await newWallet()).getAddress())),
           ];
           const msgs = [
-            await builder.createUpdateConfirmersMsg(chain.headBlockId, confOps),
+            await builder.createUpdateConfirmersMsg(headId, confOps),
             newSetDirMsg(firmcore.randomIPFSLink()),
             newRemoveAccountMsg(accountIds[6]!),
             newEFSubmitResultsMsg([
@@ -478,7 +490,7 @@ describe("IFirmCore", function () {
             ]),
           ];
 
-          const promise = chain.builder.createBlock(chain.headBlockId, msgs);
+          const promise = chain.builder.createBlock(headId, msgs);
 
           expect(promise.then(block => block.msgs)).to.eventually.deep.equal(msgs);
         });
@@ -498,7 +510,7 @@ describe("IFirmCore", function () {
         let rBlock1: EFBlock;
         before("create a new block", async function() {
           const builder = chain.builder;
-          const promise1 = builder.createBlock(chain.headBlockId, []);
+          const promise1 = builder.createBlock(await chain.headBlockId(), []);
           await expect(promise1).to.be.fulfilled;
           block1 = await promise1;
         });
@@ -533,8 +545,10 @@ describe("IFirmCore", function () {
     describe("BlockConfirmer", function() {
       describe("confirm", function() {
         let block: EFBlock;
+        let prevBlockId: BlockId;
         before("block should be created", async function() {
-          const promise = chain.builder.createBlock(chain.headBlockId, 
+          prevBlockId = await chain.headBlockId();
+          const promise = chain.builder.createBlock(prevBlockId, 
             [newSetDirMsg(firmcore.randomIPFSLink())],
           );
           await expect(promise).to.be.fulfilled;
@@ -578,31 +592,54 @@ describe("IFirmCore", function () {
           await expect(block.state.confirmationStatus())
             .to.eventually.deep.equal({ ...oldStatus, currentWeight: 4 });
         });
-        it("should finalize a block", async function() {
-          const oldStatus = await block.state.confirmationStatus();
-          expect(oldStatus).to.containSubset({
-            currentWeight: 4,
-            final: false,
-          });
-
-          const potentialWeight = confirmerCount(genesisBl);
-          const reqThreshold = expectedThreshold(potentialWeight);
-          for (let i = 4; i < reqThreshold; i++) {
-            await expect(blConfirmers[i]!.confirm(block.id)).to.be.fulfilled;
-          }
-
-          await expect(block.state.confirmationStatus())
-            .to.eventually.deep.equal({ 
-              currentWeight: reqThreshold,
-              potentialWeight,
-              threshold: reqThreshold,
-              final: true,
+        // TODO: Tests for Byzantine behaviour?
+        describe("finalization", function() {
+          it("should finalize a block", async function() {
+            const oldStatus = await block.state.confirmationStatus();
+            expect(oldStatus).to.containSubset({
+              currentWeight: 4,
+              final: false,
             });
-        });
+
+            const potentialWeight = confirmerCount(genesisBl);
+            const reqThreshold = expectedThreshold(potentialWeight);
+            for (let i = 4; i < reqThreshold; i++) {
+              await expect(blConfirmers[i]!.confirm(block.id)).to.be.fulfilled;
+            }
+
+            await expect(block.state.confirmationStatus())
+              .to.eventually.deep.equal({ 
+                currentWeight: reqThreshold,
+                potentialWeight,
+                threshold: reqThreshold,
+                final: true,
+              });
+          });
+          it("should update headBlockId", async function() {
+            await expect(chain.headBlockId())
+              .to.eventually.be.equal(block.id);
+          });
+        })
       });
 
       describe("execution", function() {
-        // TODO: Check each message
+        describe("SetDirMsg", function() {
+          it("should change directoryId", async function() {
+            let block: EFBlock;
+            let ipfsLink = firmcore.randomIPFSLink();
+            const promise = chain.builder.createBlock(
+              await chain.headBlockId(), 
+              [newSetDirMsg(ipfsLink)]
+            );
+            await expect(promise).to.be.fulfilled;
+            block = await promise;
+
+            await confirmAndExecute(block, blConfirmers);
+
+            await expect(block.state.directoryId())
+              .to.eventually.be.equal(ipfsLink);
+          });
+        });
       });
     });
   });
