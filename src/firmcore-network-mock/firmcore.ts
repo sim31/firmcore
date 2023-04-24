@@ -1,10 +1,10 @@
 import { Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature } from "firmcontracts/interface/types";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD } from "../ifirmcore";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice } from "../ifirmcore";
 import ganache, { EthereumProvider } from "ganache";
 import { BigNumber, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain";
-import { getBlockDigest, getBlockId, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi";
+import { getBlockBodyId, getBlockDigest, getBlockId, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi";
 import { ZeroAddr, ConfirmerSet as FcConfirmerSet  } from 'firmcontracts/interface/types';
 import { timestampToDate } from '../helpers/date';
 import OpNotSupprtedError from '../exceptions/OpNotSupported';
@@ -33,6 +33,7 @@ const orderedBlocks: Record<Address, BlockId[]> = {};
 const msgs: Record<BlockId, EFMsg[]> = {};
 const fullAccounts: Record<IPFSLink, Account> = {};
 const confirmations: Record<BlockId, Address[]> = {};
+const states: Record<BlockId, EFChainState> = {};
 
 const NullAccountId = 0;
 const NullAccountAddr = ZeroAddr;
@@ -315,6 +316,11 @@ export class FirmCore implements IFirmCore {
           // console.log("head: ", head);
           // console.log("blockId: ", blockId);
           chain.headBlockId = head;
+          const ch = await this.getChain(chain.contract.address);
+          assert(ch, "should be able to retrieve chain");
+          const bl = await ch!.blockById(blockId);
+          assert(bl, "should be able to retrieve EFBlock");
+          states[blockId] = await getEFChainState(bl!);
         }
       }
     };
@@ -355,6 +361,9 @@ export class FirmCore implements IFirmCore {
     if (!chain) {
       throw new ProgrammingError("getChain returned undefined");
     } else {
+      const genesisBl = await chain.blockById(chain.genesisBlockId);
+      assert(genesisBl, "genesisBl should have been saved");
+      states[bId] = await getEFChainState(genesisBl);
       return chain;
     }
   }
@@ -625,19 +634,54 @@ export class FirmCore implements IFirmCore {
       return rSlice;
     }
 
+    const getPODChain = async (start?: number, end?: number): Promise<EFChainPODSlice> => {
+      const ordBlocks = orderedBlocks[chain.contract.address];
+      if (!ordBlocks) {
+        throw new NotFound("Blocks for this chain not found");
+      }
+
+      const slice = ordBlocks.slice(start, end);
+
+      const rSlice: EFBlockPOD[] = [];
+      for (const blockId of slice) {
+        const bl = await blockById(blockId);
+        if (!bl) {
+          throw new ProgrammingError("Block id saved in orderedBlocks but not in blocks record");
+        }
+        const state = states[blockId];
+        assert(state, "State should have been saved");
+        rSlice.push({
+          state,
+          id: blockId,
+          msgs: bl.msgs,
+          height: bl.height,
+          prevBlockId: bl.prevBlockId,
+          timestamp: bl.timestamp,
+        });
+      }
+
+      return {
+        constructorArgs: chain.constructorArgs,
+        name: chain.constructorArgs.name,
+        symbol: chain.constructorArgs.symbol,
+        blocks: rSlice,
+        address: chain.contract.address,
+        genesisBlockId: chain.genesisBlId,
+      }
+    }
+
     const efChain: EFChain = {
       builder,
       constructorArgs: chain.constructorArgs,
       blockById,
       getSlice,
-      getPODChain: undefined!, // Created in the next statement
+      getPODChain,
       name: chain.constructorArgs.name,
       symbol: chain.constructorArgs.symbol,
       address: chain.contract.address,
       genesisBlockId: chain.genesisBlId,
       headBlockId: () => chain.contract.getHead(),
     };
-    efChain.getPODChain = toEFChainPODSlice.bind(efChain, efChain);
 
     return efChain;
   }

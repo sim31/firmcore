@@ -2,7 +2,7 @@ import chai from 'chai';
 import { firmcore as _firmcore, walletManager as _walletManager } from './hooks';
 import chaiAsPromised from 'chai-as-promised';
 import chaiSubset from 'chai-subset';
-import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices, newAddConfirmerOp, newConfirmer, newRemoveConfirmerOp, BlockId, EFBlockPOD, ConfirmerOp, EFBreakoutResults, newEFBreakoutResults, newEFSubmitResultsMsg, newCreateAccountMsg, newAccount, newRemoveAccountMsg, newUpdateAccountMsg, newSetDirMsg, BlockConfirmer } from '../src/ifirmcore';
+import { IFirmCore, EFConstructorArgs, newAccountWithAddress, newEFConstructorArgs, EFChain, AccountWithAddress, EFBlock, ConfirmationStatus, AccountId, weekIndices, newAddConfirmerOp, newConfirmer, newRemoveConfirmerOp, BlockId, EFBlockPOD, ConfirmerOp, EFBreakoutResults, newEFBreakoutResults, newEFSubmitResultsMsg, newCreateAccountMsg, newAccount, newRemoveAccountMsg, newUpdateAccountMsg, newSetDirMsg, BlockConfirmer, EFChainPODSlice } from '../src/ifirmcore';
 import { IWallet, IWalletCreator, IWalletManager } from '../src/iwallet';
 import { sleep } from './helpers';
 import InvalidArgument from '../src/exceptions/InvalidArgument';
@@ -72,10 +72,12 @@ describe("IFirmCore", function () {
   });
 
   let genesisBl: EFBlock;
+  let finalizedBlocks: EFBlock[];
   before("genesis block should be retrieved", async function() {
     const promise = chain.blockById(chain.genesisBlockId);
     await expect(promise).to.eventually.not.be.undefined;
     genesisBl = (await promise)!;
+    finalizedBlocks = [genesisBl];
   });
 
   let accountIds: AccountId[] = [];
@@ -640,6 +642,8 @@ describe("IFirmCore", function () {
                 threshold: reqThreshold,
                 final: true,
               });
+
+            finalizedBlocks.push(block);
           });
           it("should update headBlockId", async function() {
             await expect(chain.headBlockId())
@@ -661,6 +665,7 @@ describe("IFirmCore", function () {
             block = await promise;
 
             await confirmAndExecute(block, blConfirmers);
+            finalizedBlocks.push(block);
 
             await expect(block.state.directoryId())
               .to.eventually.be.equal(ipfsLink);
@@ -677,6 +682,7 @@ describe("IFirmCore", function () {
             );
 
             await confirmAndExecute(block, blConfirmers);
+            finalizedBlocks.push(block);
 
             await expect(chain.headBlockId()).to.eventually.equal(block.id);
 
@@ -698,6 +704,7 @@ describe("IFirmCore", function () {
             );
 
             await confirmAndExecute(block, blConfirmers);
+            finalizedBlocks.push(block);
 
             expect(await block.state.accountById(accountIds[0]!))
               .to.be.undefined;
@@ -717,6 +724,7 @@ describe("IFirmCore", function () {
             );
 
             await confirmAndExecute(block, blConfirmers);
+            finalizedBlocks.push(block);
 
             expect(await block.state.accountById(accountIds[0]!))
               .to.deep.equal({ ...newAcc, id: accountIds[0]! });
@@ -741,6 +749,7 @@ describe("IFirmCore", function () {
             const block = await promise;
 
             await confirmAndExecute(block, blConfirmers);
+            finalizedBlocks.push(block);
 
             expect(await block.state.delegate(0, 0)).to.be.equal(accountIds[2]!);
             expect(await block.state.delegate(0, 1)).to.be.equal(accountIds[3]!);
@@ -772,6 +781,7 @@ describe("IFirmCore", function () {
             );
 
             await confirmAndExecute(block, blConfirmers);
+            finalizedBlocks.push(block);
             
             expect(await chain.headBlockId()).to.be.equal(block.id);
 
@@ -789,6 +799,7 @@ describe("IFirmCore", function () {
             const nConfirmer2 = await firmcore.createWalletConfirmer(nWallet2);
             await expect(nConfirmer1.confirm(block2.id)).to.be.fulfilled;
             await expect(nConfirmer2.confirm(block2.id)).to.be.fulfilled;
+            finalizedBlocks.push(block2);
 
             // Now that we added confirmations from new confirmers, headBlockId should be updated
             expect(await chain.headBlockId()).to.be.equal(block2.id);
@@ -798,7 +809,127 @@ describe("IFirmCore", function () {
 
       });
     });
+  });
 
+  describe("EFChain", function() {
+    function sliceEqualsSaved(slice: EFBlock[] | EFBlockPOD[], saved: EFBlock[]) {
+      for (let i = 0; i < slice.length; i++) {
+        expect(slice[i]).to.containSubset({
+          id: saved[i]?.id,
+          prevBlockId: saved[i]?.prevBlockId,
+          height: saved[i]?.height,
+          timestamp: saved[i]?.timestamp,
+          msgs: saved[i]?.msgs,
+        });
+      }
+    }
+    describe("getSlice", function() {
+      it("should return all created blocks", async function() {
+        const promise = chain.getSlice();
+        await expect(promise).to.be.fulfilled;
+        const slice = await promise;
 
+        expect(slice.length).to.be.equal(finalizedBlocks.length);
+
+        sliceEqualsSaved(slice, finalizedBlocks);
+      });
+      it("should return last blocks", async function() {
+        const firstIndex = finalizedBlocks.length - 5;
+        const promise = chain.getSlice(firstIndex);
+        await expect(promise).to.be.fulfilled;
+        const slice = await promise;
+
+        expect(slice.length).to.be.equal(5);
+
+        sliceEqualsSaved(slice, finalizedBlocks.slice(firstIndex));
+
+        const slice2 = await chain.getSlice(-3);
+
+        expect(slice2.length).to.be.equal(3);
+
+        sliceEqualsSaved(slice2, finalizedBlocks.slice(-3));
+      });
+
+      it("should return first blocks", async function() {
+        const slice = await chain.getSlice(0, 3);
+        expect(slice.length).to.equal(3);
+        sliceEqualsSaved(slice, finalizedBlocks.slice(0, 3));
+      });
+    });
+
+    describe("getPODChain", function() {
+      it("should return all created blocks", async function() {
+        const promise = chain.getPODChain();
+        await expect(promise).to.be.fulfilled;
+        const ch = await promise;
+
+        expect(ch.blocks.length).to.be.equal(finalizedBlocks.length);
+
+        sliceEqualsSaved(ch.blocks, finalizedBlocks);
+      });
+      it("should return last blocks", async function() {
+        const firstIndex = finalizedBlocks.length - 5;
+        const promise = chain.getPODChain(firstIndex);
+        await expect(promise).to.be.fulfilled;
+        const ch = await promise;
+
+        expect(ch.blocks.length).to.be.equal(5);
+
+        sliceEqualsSaved(ch.blocks, finalizedBlocks.slice(firstIndex));
+
+        const ch2 = await chain.getPODChain(-3);
+
+        expect(ch2.blocks.length).to.be.equal(3);
+
+        sliceEqualsSaved(ch2.blocks, finalizedBlocks.slice(-3));
+      });
+
+      it("should return first blocks", async function() {
+        const ch = await chain.getPODChain(0, 2);
+        expect(ch.blocks.length).to.equal(2);
+        sliceEqualsSaved(ch.blocks, finalizedBlocks.slice(0, 2));
+      });
+
+      it("should return chain info", async function() {
+        const ch = await chain.getPODChain(0, 2);
+
+        expect(ch).to.containSubset({
+          constructorArgs: chain.constructorArgs,
+          name: chain.name,
+          symbol: chain.symbol,
+          genesisBlockId: chain.genesisBlockId,
+        });
+      });
+
+      describe("state", function() {
+        let ch: EFChainPODSlice;
+        let lastBlock: EFBlockPOD;
+        before("should retrieve the chain", async function() {
+          ch = await chain.getPODChain();
+          const bl = ch.blocks[ch.blocks.length - 1];
+          expect(bl).to.not.be.undefined;
+          lastBlock = bl!;
+        })
+
+        it("should have latest delegates", function() {
+          expect(lastBlock.state.delegates).to.containSubset({
+            0: {
+              0: accountIds[2],
+              1: accountIds[3],
+            }
+          });
+        });
+
+        it("should have latest directoryId", async function() {
+          const expId = await (await chain.blockById(await chain.headBlockId()))?.state.directoryId();
+          expect(lastBlock.state.directoryId).to.equal(expId);
+        });
+
+        // TODO: Test state of confirmations
+        // it("should ")
+
+      });
+
+    });
   });
 });

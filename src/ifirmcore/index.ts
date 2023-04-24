@@ -319,16 +319,18 @@ export async function getAllDelegates(block: EFBlock): Promise<Delegates> {
   return del;
 }
 
-export async function toEFBlockPOD(block: EFBlock): Promise<EFBlockPOD> {
-  const state: EFChainState = {
+export async function getEFChainState(block: EFBlock): Promise<EFChainState> {
+  return {
     delegates: await getAllDelegates(block),
     confirmerSet: block.state.confirmerSet,
     confirmations: await block.state.confirmations(),
     confirmationStatus: await block.state.confirmationStatus(),
     directoryId: await block.state.directoryId(),
   }
+}
 
-  return { ...block, state };
+export async function toEFBlockPOD(block: EFBlock): Promise<EFBlockPOD> {
+  return { ...block, state: await getEFChainState(block), };
 }
 
 export async function toEFChainPODSlice(
