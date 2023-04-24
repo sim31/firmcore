@@ -264,6 +264,10 @@ export class FirmCore implements IFirmCore {
         if (!block) {
           throw new NotFound("Block not found");
         }
+        const prevBlock = blocks[utils.hexlify(block.header.prevBlockId)];
+        if (!prevBlock) {
+          throw new NotFound("Previous block not found");
+        }
         const chain = chains[block.contract ?? 0];
         if (!chain) {
           throw new NotFound("Chain not found");
@@ -299,7 +303,7 @@ export class FirmCore implements IFirmCore {
         }
         bConfs.push(wallet.getAddress());
 
-        const confirmStatus = _confirmStatusFromBlock(block, bConfs);
+        const confirmStatus = _confirmStatusFromBlock(prevBlock, bConfs);
         if (confirmStatus.final) {
           // console.log("headBlock: ", await chain.contract.getHead());
           // console.log("getBlockId(block): ", getBlockId(block.header));
