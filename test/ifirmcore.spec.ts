@@ -24,10 +24,10 @@ function confirmerCount(block: EFBlock) {
   return Object.values(block.state.confirmerSet.confirmers).length;
 }
 
-async function confirmAndExecute(block: EFBlock, confirmers: BlockConfirmer[]) {
+async function confirmAndExecute(block: EFBlock, confirmers: BlockConfirmer[], start?: number) {
   const potentialWeight = confirmerCount(block);
   const reqThreshold = expectedThreshold(potentialWeight);
-  for (let i = 0; i < reqThreshold; i++) {
+  for (let i = start ?? 0; i < reqThreshold; i++) {
     await expect(confirmers[i]!.confirm(block.id)).to.be.fulfilled;
   }
 }
@@ -760,12 +760,16 @@ describe("IFirmCore", function () {
         });
 
         describe("UpdateConfirmersMsg", function() {
+          let nConfirmer1: BlockConfirmer;
+          let nConfirmer2: BlockConfirmer;
+          let nWallet1: IWallet;
+          let nWallet2: IWallet;
           it("should require different set of confirmations for the next block", async function() {
             const builder = chain.builder;
             const oldConfSet = genesisBl.state.confirmerSet;
             const confs = Object.values(oldConfSet.confirmers);
-            const nWallet1 = await newWallet();
-            const nWallet2 = await newWallet();
+            nWallet1 = await newWallet();
+            nWallet2 = await newWallet();
             const confOps = [
               newRemoveConfirmerOp(confs[3]!),
               newAddConfirmerOp(newConfirmer(nWallet1.getAddress())),
@@ -805,6 +809,13 @@ describe("IFirmCore", function () {
             expect(await chain.headBlockId()).to.be.equal(block2.id);
           });
 
+          after("update coinfirmer wallets", function() {
+            const w3 = wallets[3];
+            const w2 = wallets[2];
+            wallets[2] = nWallet1;
+            wallets[3] = nWallet2;
+            wallets.push(w2!, w3!);
+          });
         });
 
       });
@@ -911,6 +922,13 @@ describe("IFirmCore", function () {
           lastBlock = bl!;
         })
 
+        let blConfirmers: BlockConfirmer[] = [];
+        before("should create BlockConfirmer(s)", async function() {
+          for (const wallet of wallets) {
+            blConfirmers.push(await firmcore.createWalletConfirmer(wallet));
+          }
+        });
+
         it("should have latest delegates", function() {
           expect(lastBlock.state.delegates).to.containSubset({
             0: {
@@ -926,8 +944,90 @@ describe("IFirmCore", function () {
         });
 
         // TODO: Test state of confirmations
+        // * confirmations and confirmationStatus for the last block
+        // * confirmations and confirmationStatus for older blocks
         // it("should ")
 
+        let block: EFBlock;
+        it("should have updated confirmation state for the latest block", async function() {
+          block = await chain.builder.createBlock(
+            await chain.headBlockId(),
+            [newSetDirMsg(firmcore.randomIPFSLink())],
+          );
+
+          let blockPod = await chain.blockPODById(block.id);
+          expect(blockPod).to.not.be.undefined;
+
+          expect(blockPod!.state.confirmations.length).to.be.equal(0);
+          expect(blockPod!.state.confirmationStatus.currentWeight).to.be.equal(0);
+          expect(blockPod!.state.confirmationStatus.final).to.be.false;
+
+          await blConfirmers[0]?.confirm(blockPod!.id);
+
+          blockPod = await chain.blockPODById(block.id);
+          expect(blockPod).to.not.be.undefined;
+          expect(blockPod!.state.confirmations)
+            .to.be.deep.equal([blConfirmers[0]!.address])
+          expect(blockPod!.state.confirmationStatus.currentWeight).to.be.equal(1);
+
+          await confirmAndExecute(block, blConfirmers, 1);
+
+          blockPod = await chain.blockPODById(block.id);
+          expect(blockPod).to.not.be.undefined;
+          expect(blockPod!.state.confirmations).to.be.deep.equal([
+            blConfirmers[0]!.address,
+            blConfirmers[1]!.address,
+            blConfirmers[2]!.address,
+            blConfirmers[3]!.address,
+            blConfirmers[4]!.address,
+            blConfirmers[5]!.address,
+            blConfirmers[6]!.address,
+            blConfirmers[7]!.address,
+          ]);
+          expect(blockPod!.state.confirmationStatus.currentWeight).to.be.equal(8);
+          expect(blockPod!.state.confirmationStatus.final).to.be.true;
+        });
+
+        it("should have updated confirmation state for older blocks", async function() {
+          let headId = await chain.headBlockId();
+          expect(headId).to.be.equal(block.id);
+          // Extend the chain first
+          const bl2 = await chain.builder.createBlock(
+            headId,
+            [newSetDirMsg(firmcore.randomIPFSLink())],
+          );
+          await confirmAndExecute(bl2, blConfirmers);
+          headId = await chain.headBlockId();
+          expect(headId).to.be.equal(bl2.id);
+
+          const bl3 = await chain.builder.createBlock(
+            headId,
+            [newCreateAccountMsg(newAccount({}))],
+          );
+          await confirmAndExecute(bl3, blConfirmers);
+          headId = await chain.headBlockId();
+          expect(headId).to.be.equal(bl3.id);
+
+          let blockPod = await chain.blockPODById(block.id);
+          expect(blockPod!.state.confirmationStatus.currentWeight).to.be.equal(8);
+          expect(blockPod!.state.confirmationStatus.final).to.be.true;
+
+          await blConfirmers[8]?.confirm(blockPod!.id);
+
+          blockPod = await chain.blockPODById(block.id);
+          expect(blockPod!.state.confirmations.length).to.be.equal(9);
+          expect(blockPod!.state.confirmations[8]).to.be.equal(blConfirmers[8]!.address);
+          expect(blockPod?.state.confirmationStatus.currentWeight).to.be.equal(9);
+          expect(blockPod!.state.confirmationStatus.final).to.be.true;
+
+          await blConfirmers[9]!.confirm(blockPod!.id);
+
+          blockPod = await chain.blockPODById(block.id);
+          expect(blockPod!.state.confirmations.length).to.be.equal(10);
+          expect(blockPod!.state.confirmations[9]).to.be.equal(blConfirmers[9]!.address);
+          expect(blockPod?.state.confirmationStatus.currentWeight).to.be.equal(10);
+          expect(blockPod!.state.confirmationStatus.final).to.be.true;
+        });
       });
 
     });

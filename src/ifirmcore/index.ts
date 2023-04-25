@@ -142,7 +142,7 @@ export type RoomNumber = number;
 export const weekIndices = [0, 1, 2, 3] as const;
 export type WeekIndex = typeof weekIndices[number];
 export type Delegates = Record<WeekIndex, Record<RoomNumber, AccountId> | undefined>;
-const emptyDelegates: Delegates = {
+export const emptyDelegates: Delegates = {
   0: undefined, 1: undefined, 2: undefined, 3: undefined,
 };
 
@@ -299,6 +299,7 @@ export interface EFChain extends RespectChain {
   builder: EFBlockBuilder;
 
   blockById(id: BlockId): Promise<EFBlock | undefined>;
+  blockPODById(id: BlockId): Promise<EFBlockPOD | undefined>;
   
   getSlice(start?: number, end?: number): Promise<EFBlock[]>;
 

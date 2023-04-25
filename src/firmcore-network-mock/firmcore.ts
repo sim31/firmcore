@@ -1,6 +1,6 @@
 import { Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature } from "firmcontracts/interface/types";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice } from "../ifirmcore";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates } from "../ifirmcore";
 import ganache, { EthereumProvider } from "ganache";
 import { BigNumber, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain";
@@ -299,13 +299,15 @@ export class FirmCore implements IFirmCore {
         await tx.wait()
 
         const bConfs = confirmations[blockId];
+
         if (!bConfs) {
           throw new ProgrammingError("Confirmations empty");
         }
-        bConfs.push(wallet.getAddress());
 
+        const prevConfirmStatus = _confirmStatusFromBlock(prevBlock, bConfs);
+        bConfs.push(wallet.getAddress());
         const confirmStatus = _confirmStatusFromBlock(prevBlock, bConfs);
-        if (confirmStatus.final) {
+        if (!prevConfirmStatus.final && confirmStatus.final) {
           // console.log("headBlock: ", await chain.contract.getHead());
           // console.log("getBlockId(block): ", getBlockId(block.header));
           await chain.contract.finalizeAndExecute(block);
@@ -321,6 +323,15 @@ export class FirmCore implements IFirmCore {
           const bl = await ch!.blockById(blockId);
           assert(bl, "should be able to retrieve EFBlock");
           states[blockId] = await getEFChainState(bl!);
+        } else {
+          // Update confirmation state
+          states[blockId] = {
+            delegates: emptyDelegates,
+            directoryId: ZeroId,
+            confirmations: bConfs,
+            confirmationStatus: confirmStatus,
+            confirmerSet: _confirmerSetFromBlock(block),
+          }
         }
       }
     };
@@ -497,10 +508,26 @@ export class FirmCore implements IFirmCore {
               }
             })
           }
-
         }
       }
     };
+
+    const blockPODById = async (blockId: BlockId): Promise<EFBlockPOD | undefined> => {
+      const bl = await blockById(blockId);
+      const state = states[blockId];
+      if (bl && state) {
+        return {
+          id: bl.id,
+          prevBlockId: bl.prevBlockId,
+          msgs: bl.msgs,
+          timestamp: bl.timestamp,
+          height: bl.height,
+          state,
+        }
+      } else {
+        return undefined;
+      }
+    }
 
     const builder: EFBlockBuilder = {
       createUpdateConfirmersMsg: async (
@@ -605,6 +632,15 @@ export class FirmCore implements IFirmCore {
         blockNums[bId] = prevBlockNum + 1;
         msgs[bId] = messages;
         confirmations[bId] = [];
+        const confSet = _confirmerSetFromBlock(block);
+        const confirmStatus = _confirmStatusFromBlock(prevBlock, []);
+        states[bId] = {
+          delegates: emptyDelegates,
+          directoryId: ZeroId,
+          confirmations: [],
+          confirmationStatus: confirmStatus,
+          confirmerSet: confSet
+        }
 
         // Construct EFBlock version of the block just created
         const efBlock = await blockById(bId);
@@ -674,6 +710,7 @@ export class FirmCore implements IFirmCore {
       builder,
       constructorArgs: chain.constructorArgs,
       blockById,
+      blockPODById,
       getSlice,
       getPODChain,
       name: chain.constructorArgs.name,
