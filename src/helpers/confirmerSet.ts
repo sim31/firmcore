@@ -16,7 +16,7 @@ export function defaultThreshold(confs: AccountWithAddress[]): number;
 export function defaultThreshold(confs: Confirmer[]): number;
 export function defaultThreshold(confs: Confirmer[] | AccountWithAddress[]): number {
   const sum = sumWeight(confs);
-  const threshold = Math.ceil((sum * 2) / 3) + 1;
+  const threshold = Math.min(Math.ceil((sum * 2) / 3) + 1, sum);
   return threshold;
 }
 
