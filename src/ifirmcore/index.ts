@@ -1,5 +1,8 @@
 import { Overwrite, Required } from 'utility-types';
 import { IWallet } from '../iwallet';
+import ByzantineChain from '../exceptions/ByzantineChain';
+import InvalidArgument from '../exceptions/InvalidArgument';
+import assert from '../helpers/assert';
 
 export type Address = string;
 export type BlockId = string;
@@ -11,8 +14,7 @@ export type PlatformId = string;
 export type PlatformAccountId = string;
 export type TokenBalance = number;
 export type OptAccountId = AccountId | undefined;
-export type Timestamp = Date;
-export type TimestampPOD = number;
+export type Timestamp = number;
 
 export interface Confirmer {
   address: Address;
@@ -90,7 +92,14 @@ export function newAccount(
   return { id: id ?? 0, address, name, extAccounts };
 }
 
+export interface Accounts {
+  accountById: Record<AccountId, Account>;
+  accountByAddress: Record<Address, AccountId>;
+};
+
+// Might not be full
 export interface FirmAccountSystemState extends ChainState {
+  allAccounts: boolean; // true if these are all the accounts
   accountById?: Record<AccountId, Account>;
   accountByAddress?: Record<Address, AccountId>;
 }
@@ -239,7 +248,7 @@ export interface EFBlock {
   id: BlockId;
   prevBlockId: BlockId;
   height: number;
-  timestamp: Date;
+  timestamp: Timestamp;
   msgs: EFMsg[];
   state: EFChainAccessor;
 }
@@ -288,10 +297,99 @@ export function newEFConstructorArgs(
   return { confirmers, name, symbol, threshold };
 }
 
+export type BlockSlot<BlockType> = BlockType[];
+
+export interface ValidBlockSlot<BlockType> {
+  finalized?: BlockType;
+  orphans: BlockType[];
+}
+
+export type FinalValidBlockSlot<BlockType> =
+  Required<ValidBlockSlot<BlockType>, 'finalized'>;
+
+export type Slots<BlockType> = BlockSlot<BlockType>[];
+
+export interface ValidSlots<BlockType> {
+  proposed: BlockType[];  // Proposed future blocks;
+  consensus: FinalValidBlockSlot<BlockType>; // latest finalized block;
+  past: FinalValidBlockSlot<BlockType>[]; // Past blocks
+}
+
+// Like ValidSlots except without orphans and structured differently
+export interface NormalizedSlots<BlockType> {
+  proposed: BlockType[];
+  // The last block is "consensus" in ValidSlots
+  finalizedBlocks: BlockType[];
+}
 
 export interface EFChainPODSlice extends Omit<RespectChain, 'headBlockId'> {
   constructorArgs: EFConstructorArgs;
-  blocks: EFBlockPOD[];
+  slots: Slots<EFBlockPOD>;
+}
+
+export type ValidEFChainPOD = Overwrite<EFChainPODSlice, {
+  slots: ValidSlots<EFBlockPOD>;
+}>;
+
+export type NormEFChainPOD = Overwrite<EFChainPODSlice, {
+  slots: NormalizedSlots<EFBlockPOD>;
+}>;
+
+export function normalizeSlots<T extends EFBlock | EFBlockPOD>(
+  slice: ValidSlots<T>
+): NormalizedSlots<T> {
+  const finalizedBlocks = slice.past.map(slot => slot.finalized);
+  finalizedBlocks.push(slice.consensus.finalized);
+  return { finalizedBlocks, proposed: slice.proposed };
+}
+
+export async function toValidSlots<T extends EFBlock | EFBlockPOD>(
+  slice: Slots<T>
+): Promise<ValidSlots<T>> {
+  // * Check that there's only one finalized at each slot
+  // * Stop at first slot without a finalized block, put blocks in that slot to proposed
+  let currentSlot: ValidBlockSlot<T> = { orphans: [] };
+  const past = new Array<FinalValidBlockSlot<T>>();
+  for (const slot of slice) {
+    for (const block of slot) {
+      const confStatus = block.state.confirmationStatus;
+      let confirmStatus: ConfirmationStatus;
+      if (typeof confStatus === 'function') {
+        confirmStatus = await confStatus();
+      } else {
+        confirmStatus = confStatus;
+      }
+      if (confirmStatus.final) {
+        if (currentSlot.finalized) {
+          throw new ByzantineChain("More than 1 finalized block");
+        } else {
+          currentSlot.finalized = block;
+        }
+      } else {
+        currentSlot.orphans.push(block);
+      }
+    }
+
+    if (currentSlot.finalized === undefined) {
+      break;
+    } else {
+      // We check if currentSlot.finalized is defined above
+      past.push(currentSlot as FinalValidBlockSlot<T>);
+      currentSlot = { orphans: [] };
+    }
+  }
+
+  // Get the last finalized slot
+  const consensusBl = past.pop();
+  if (consensusBl === undefined) {
+    throw new InvalidArgument("Passed slice does not contain at least 1 finalized block");
+  }
+
+  return {
+    proposed: currentSlot.orphans,
+    consensus: consensusBl,
+    past,
+  }
 }
 
 export interface EFChain extends RespectChain {
@@ -301,9 +399,13 @@ export interface EFChain extends RespectChain {
   blockById(id: BlockId): Promise<EFBlock | undefined>;
   blockPODById(id: BlockId): Promise<EFBlockPOD | undefined>;
   
-  getSlice(start?: number, end?: number): Promise<EFBlock[]>;
+  getSlots(start?: number, end?: number): Promise<Slots<EFBlock>>;
+  getValidSlots(start?: number, end?: number): Promise<ValidSlots<EFBlock>>;
+  getNormalizedSlots(start?: number, end?: number): Promise<NormalizedSlots<EFBlock>>;
 
   getPODChain(start?: number, end?: number): Promise<EFChainPODSlice>;
+  getValidPODChain(start?: number, end?: number): Promise<ValidEFChainPOD>;
+  getNormPODChain(start?: number, end?: number): Promise<NormEFChainPOD>;
 }
 
 export async function getAllDelegates(block: EFBlock): Promise<Delegates> {
@@ -320,9 +422,69 @@ export async function getAllDelegates(block: EFBlock): Promise<Delegates> {
   return del;
 }
 
+export async function getDelegateAccounts(
+  block: EFBlock,
+  delegates: Delegates,
+  accounts?: Accounts
+): Promise<Accounts> {
+  if (!accounts) {
+    accounts = {
+      accountById: {},
+      accountByAddress: {},
+    }
+  }
+  for (const weekIndex of weekIndices) {
+    const week = delegates[weekIndex];
+    if (week) {
+      for (let index = 0; index < Object.keys(week).length; index++) {
+        const accountId = week[index];
+        assert(accountId !== undefined, "delegate records cannot have gaps");
+        const account = await block.state.accountById(accountId!);
+        assert(account !== undefined, "cannot find an account");
+        accounts.accountById[accountId!] = account!;
+        if (account!.address) {
+          accounts.accountByAddress[account!.address] = accountId!;
+        }
+      }
+    }
+  }
+  return accounts;
+}
+
+export async function getConfirmerAccounts(
+  block: EFBlock,
+  confirmerAddrs: Address[],
+  accounts?: Accounts
+): Promise<Accounts> {
+  if (!accounts) {
+    accounts = {
+      accountById: {},
+      accountByAddress: {}
+    };
+  }
+
+  for (const addr of confirmerAddrs) {
+    const account = await block.state.accountByAddress(addr);
+    assert(account, "cannot find account");
+    accounts.accountByAddress[addr] = account!.id;
+    accounts.accountById[account!.id] = account!;
+  }
+  return accounts;
+}
+
 export async function getEFChainState(block: EFBlock): Promise<EFChainState> {
+  const delegates = await getAllDelegates(block);
+  const delegateAccounts = await getDelegateAccounts(block, delegates);
+  const allAccounts = await getConfirmerAccounts(
+    block,
+    Object.keys(block.state.confirmerSet.confirmers),
+    delegateAccounts,
+  );
   return {
-    delegates: await getAllDelegates(block),
+    delegates,
+    allAccounts: false,
+    accountByAddress: allAccounts.accountByAddress,
+    accountById: allAccounts.accountById,
     confirmerSet: block.state.confirmerSet,
     confirmations: await block.state.confirmations(),
     confirmationStatus: await block.state.confirmationStatus(),
@@ -339,14 +501,18 @@ export async function toEFChainPODSlice(
   sliceStart: number,
   sliceEnd: number
 ): Promise<EFChainPODSlice> {
-  const slice = await chain.getSlice(sliceStart, sliceEnd);
-  const blockPods: EFBlockPOD[] = [];
-  for (const block of slice) {
-    blockPods.push(await toEFBlockPOD(block));
+  const slice = await chain.getSlots(sliceStart, sliceEnd);
+  const podChain: Slots<EFBlockPOD> = [];
+  for (const slot of slice) {
+    const bls = new Array<EFBlockPOD>(); 
+    podChain.push(bls);
+    for (const bl of slot) {
+      bls.push(await toEFBlockPOD(bl));
+    }
   }
   return {
     constructorArgs: chain.constructorArgs,
-    blocks: blockPods,
+    slots: podChain,
     symbol: chain.symbol,
     address: chain.address,
     name: chain.name,

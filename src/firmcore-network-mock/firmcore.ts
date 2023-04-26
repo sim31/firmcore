@@ -1,6 +1,6 @@
 import { Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature } from "firmcontracts/interface/types";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates } from "../ifirmcore";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots } from "../ifirmcore";
 import ganache, { EthereumProvider } from "ganache";
 import { BigNumber, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain";
@@ -13,7 +13,7 @@ import { IWallet } from '../iwallet';
 import InvalidArgument from '../exceptions/InvalidArgument';
 import NotFound from '../exceptions/NotFound';
 import { Wallet } from "../wallet";
-import assert from 'assert';
+import assert from '../helpers/assert';
 import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet';
 
 let abiLib: Promise<FirmChainAbi>;
@@ -29,7 +29,7 @@ interface Chain {
 const chains: Record<Address, Chain> = {};
 const blocks: Record<BlockId, OptExtendedBlockValue> = {}
 const blockNums: Record<BlockId, number> = {}
-const orderedBlocks: Record<Address, BlockId[]> = {};
+const orderedBlocks: Record<Address, BlockId[][]> = {};
 const msgs: Record<BlockId, EFMsg[]> = {};
 const fullAccounts: Record<IPFSLink, Account> = {};
 const confirmations: Record<BlockId, Address[]> = {};
@@ -249,7 +249,7 @@ export class FirmCore implements IFirmCore {
   }
   async shutDown(): Promise<void> {
     assert(_ganacheProv, "_ganacheProv should already be set");
-    return await _ganacheProv.disconnect();
+    return await _ganacheProv!.disconnect();
   }
   async createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer> {
     let w: Wallet;
@@ -273,9 +273,13 @@ export class FirmCore implements IFirmCore {
         if (!chain) {
           throw new NotFound("Chain not found");
         }
+        const blockNum = blockNums[blockId];
+        if (!blockNum) {
+          throw new ProgrammingError("Block number not stored");
+        }
 
         const ordBlocks = orderedBlocks[chain.contract.address];
-        if (!ordBlocks) {
+        if (!ordBlocks || !ordBlocks[blockNum]) {
           throw new ProgrammingError("Block not saved into orderedBlocks index");
         }
 
@@ -311,7 +315,6 @@ export class FirmCore implements IFirmCore {
           // console.log("headBlock: ", await chain.contract.getHead());
           // console.log("getBlockId(block): ", getBlockId(block.header));
           await chain.contract.finalizeAndExecute(block);
-          ordBlocks.push(blockId);
           const head = await chain.contract.getHead();
           assert(head === blockId, "head of the chain should have been updated");
           // console.log("headBlock2: ", await chain.contract.getHead());
@@ -331,6 +334,7 @@ export class FirmCore implements IFirmCore {
             confirmations: bConfs,
             confirmationStatus: confirmStatus,
             confirmerSet: _confirmerSetFromBlock(block),
+            allAccounts: false,
           }
         }
       }
@@ -356,8 +360,7 @@ export class FirmCore implements IFirmCore {
     const bId = getBlockId(genesisBl.header);
     blocks[bId] = genesisBl;
     blockNums[bId] = 0;
-    const ordBlocks = [];
-    ordBlocks.push(bId);
+    const ordBlocks: BlockId[][] = [[bId]];
     orderedBlocks[contract.address] = ordBlocks;
     msgs[bId] = [];
     confirmations[bId] = [];
@@ -374,12 +377,13 @@ export class FirmCore implements IFirmCore {
     } else {
       const genesisBl = await chain.blockById(chain.genesisBlockId);
       assert(genesisBl, "genesisBl should have been saved");
-      states[bId] = await getEFChainState(genesisBl);
+      states[bId] = await getEFChainState(genesisBl!);
       return chain;
     }
   }
 
   async getChain(address: Address): Promise<EFChain | undefined> {
+    await _waitForInit();
     const chain = chains[address];
     if (!chain) {
       return undefined;
@@ -398,7 +402,7 @@ export class FirmCore implements IFirmCore {
         id,
         prevBlockId: ethers.utils.hexlify(block.header.prevBlockId),
         height,
-        timestamp: timestampToDate(block.header.timestamp),
+        timestamp: BigNumber.from(block.header.timestamp).toNumber(),
         msgs: messages, 
         state: {
           confirmerSet: _confirmerSetFromBlock(block),
@@ -568,6 +572,11 @@ export class FirmCore implements IFirmCore {
           throw new NotFound("Chain not found");
         }
 
+        const ordBlocks = orderedBlocks[chain.contract.address];
+        if (!ordBlocks) {
+          throw new NotFound("Blocks of the chain not found");
+        }
+
         const serializedMsgs: Message[] = [];
         let confOps: ConfirmerOpValue[] | undefined;
         let newThreshold: number | undefined;
@@ -628,8 +637,9 @@ export class FirmCore implements IFirmCore {
         );
 
         const bId = getBlockId(block.header);
+        const blockNum = prevBlockNum + 1;
         blocks[bId] = block;
-        blockNums[bId] = prevBlockNum + 1;
+        blockNums[bId] = blockNum;
         msgs[bId] = messages;
         confirmations[bId] = [];
         const confSet = _confirmerSetFromBlock(block);
@@ -639,8 +649,15 @@ export class FirmCore implements IFirmCore {
           directoryId: ZeroId,
           confirmations: [],
           confirmationStatus: confirmStatus,
-          confirmerSet: confSet
+          confirmerSet: confSet,
+          allAccounts: false,
         }
+        let slot = ordBlocks[blockNum];
+        if (!slot) {
+          slot = [];
+          ordBlocks[blockNum] = slot;
+        }
+        slot.push(bId);
 
         // Construct EFBlock version of the block just created
         const efBlock = await blockById(bId);
@@ -651,7 +668,7 @@ export class FirmCore implements IFirmCore {
       }
     }
 
-    const getSlice = async (start?: number, end?: number) => {
+    const getSlots = async (start?: number, end?: number) => {
       const ordBlocks = orderedBlocks[chain.contract.address];
       if (!ordBlocks) {
         throw new NotFound("Blocks for this chain not found");
@@ -659,13 +676,17 @@ export class FirmCore implements IFirmCore {
 
       const slice = ordBlocks.slice(start, end);
 
-      const rSlice: EFBlock[] = [];
-      for (const blockId of slice) {
-        const bl = await blockById(blockId);
-        if (!bl) {
-          throw new ProgrammingError("Block id saved in orderedBlocks but not in blocks record");
+      const rSlice: EFBlock[][] = [];
+      for (const slot of slice) {
+        const newSlot = new Array<EFBlock>();
+        rSlice.push(newSlot);
+        for (const blockId of slot) {
+          const bl = await blockById(blockId);
+          if (!bl) {
+            throw new ProgrammingError("Block id saved in orderedBlocks but not in blocks record");
+          }
+          newSlot.push(bl);
         }
-        rSlice.push(bl);
       }
       return rSlice;
     }
@@ -678,41 +699,71 @@ export class FirmCore implements IFirmCore {
 
       const slice = ordBlocks.slice(start, end);
 
-      const rSlice: EFBlockPOD[] = [];
-      for (const blockId of slice) {
-        const bl = await blockById(blockId);
-        if (!bl) {
-          throw new ProgrammingError("Block id saved in orderedBlocks but not in blocks record");
+      const rSlice: EFBlockPOD[][] = [];
+      for (const slot of slice) {
+        const newSlot = new Array<EFBlockPOD>();
+        rSlice.push(newSlot);
+        for (const blockId of slot) {
+          const bl = await blockById(blockId);
+          if (!bl) {
+            throw new ProgrammingError("Block id saved in orderedBlocks but not in blocks record");
+          }
+          const state = states[blockId];
+          assert(state, "State should have been saved");
+          newSlot.push({
+            state: state!,
+            id: blockId,
+            msgs: bl.msgs,
+            height: bl.height,
+            prevBlockId: bl.prevBlockId,
+            timestamp: bl.timestamp,
+          });
         }
-        const state = states[blockId];
-        assert(state, "State should have been saved");
-        rSlice.push({
-          state,
-          id: blockId,
-          msgs: bl.msgs,
-          height: bl.height,
-          prevBlockId: bl.prevBlockId,
-          timestamp: bl.timestamp,
-        });
       }
 
       return {
         constructorArgs: chain.constructorArgs,
         name: chain.constructorArgs.name,
         symbol: chain.constructorArgs.symbol,
-        blocks: rSlice,
+        slots: rSlice,
         address: chain.contract.address,
         genesisBlockId: chain.genesisBlId,
       }
     }
+
+    const getValidSlots = async (start?: number, end?: number): Promise<ValidSlots<EFBlock>> => {
+      const slice = await getSlots(start, end);
+      return toValidSlots(slice);
+    };
+
+    const getValidPODChain = async (start?: number, end?: number): Promise<ValidEFChainPOD> => {
+      const podChain = await getPODChain(start, end);
+      const slots = await toValidSlots(podChain.slots);
+      return { ...podChain, slots };
+    };
+
+    const getNormalizedSlots = async (start?: number, end?: number): Promise<NormalizedSlots<EFBlock>> => {
+      const validSlots = await getValidSlots(start, end);
+      return normalizeSlots(validSlots);
+    }
+
+    const getNormPODChain = async (start?: number, end?: number): Promise<NormEFChainPOD> => {
+      const validChain = await getValidPODChain(start, end);
+      const slots = await normalizeSlots(validChain.slots);
+      return { ...validChain, slots };
+    };
 
     const efChain: EFChain = {
       builder,
       constructorArgs: chain.constructorArgs,
       blockById,
       blockPODById,
-      getSlice,
+      getSlots,
+      getValidSlots,
+      getNormalizedSlots,
       getPODChain,
+      getValidPODChain,
+      getNormPODChain,
       name: chain.constructorArgs.name,
       symbol: chain.constructorArgs.symbol,
       address: chain.contract.address,

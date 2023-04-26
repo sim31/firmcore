@@ -15,5 +15,7 @@ export interface IWalletCreator {
 export interface IWalletManager {
   getCreator(): IWalletCreator;
   getWallet(address: Address): Promise<IWallet | undefined>;
+  getWalletAddressesAsync(): Promise<Address[]>;
+  getWalletAddresses(): Address[];
   // getWalletByPubKey(pubKey: PublicKey): Promise<IWallet>;
 }

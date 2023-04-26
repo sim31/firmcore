@@ -94,4 +94,12 @@ export class WalletManager implements IWalletManager {
   getWallet(address: Address): Promise<IWallet | undefined> {
     return new Promise((resolve) => { resolve(_byAddress[address]) });
   }
+
+  async getWalletAddressesAsync(): Promise<Address[]> {
+    return _wallets.map(w => w.getAddress());
+  }
+
+  getWalletAddresses(): Address[] {
+    return _wallets.map(w => w.getAddress());
+  }
 }

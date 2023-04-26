@@ -1,8 +1,16 @@
 import { IFirmCore } from './src/ifirmcore';
 import { FirmCore } from './src/firmcore-network-mock/firmcore';
 
-const _firmcore = new FirmCore();
+const _firmcore = new FirmCore(false, false);
 
 export * from './src/ifirmcore';
 
 export default _firmcore as IFirmCore;
+
+export * from './src/iwallet';
+export type Address = string;
+
+import { WalletManager } from './src/wallet';
+import { IWalletManager } from './src/iwallet';
+
+export const walletManager = new WalletManager() as IWalletManager;
