@@ -124,7 +124,7 @@ export interface RespectAccessor extends FirmAccountSystemAccessor {
 // TODO: types for making actions on a chain
 
 export interface FractalBreakoutResult {
-  ranks: readonly [OptAccountId, OptAccountId, OptAccountId, OptAccountId, OptAccountId, OptAccountId];
+  ranks: [OptAccountId, OptAccountId, OptAccountId, OptAccountId, OptAccountId, OptAccountId];
 }
 export function newFractalBreakoutResult(
   rank1?: AccountId, rank2?: AccountId, rank3?: AccountId,
@@ -166,8 +166,18 @@ export interface EFChainAccessor extends RespectAccessor, DirectoryAccessor {
   delegates(weekIndex: WeekIndex): Promise<AccountId[] | undefined>;
 }
 
+export const msgTypeNames = [
+  'efSubmitResults',
+  'setDir',
+  'updateConfirmers',
+  'createAccount',
+  'removeAccount',
+  'updateAccount',
+] as const;
+export type MsgTypeName = typeof msgTypeNames[number];
+
 export interface Msg {
-  readonly name: string;
+  readonly name: MsgTypeName;
 }
 
 export interface EFSubmitResultsMsg extends Msg {
