@@ -204,6 +204,15 @@ function _confirmStatusFromBlock(prevBlock: OptExtendedBlockValue, confirms: Add
   };
 }
 
+function _confirmStatusForGenesis(): ConfirmationStatus {
+  return {
+    threshold: 0,
+    currentWeight: 0,
+    potentialWeight: 0,
+    final: false,
+  };
+}
+
 async function _signBlock(wallet: Wallet, block: OptExtendedBlockValue): Promise<Signature> {
   const digest = getBlockDigest(block.header);
   return await wallet.ethSign(digest);
@@ -266,15 +275,12 @@ export class FirmCore implements IFirmCore {
           throw new NotFound("Block not found");
         }
         const prevBlock = blocks[utils.hexlify(block.header.prevBlockId)];
-        if (!prevBlock) {
-          throw new NotFound("Previous block not found");
-        }
         const chain = chains[block.contract ?? 0];
         if (!chain) {
           throw new NotFound("Chain not found");
         }
         const blockNum = blockNums[blockId];
-        if (!blockNum) {
+        if (blockNum === undefined) {
           throw new ProgrammingError("Block number not stored");
         }
 
@@ -302,16 +308,18 @@ export class FirmCore implements IFirmCore {
         // Will throw if tx fails
         await tx.wait()
 
-        const bConfs = confirmations[blockId];
+        let bConfs = confirmations[blockId];
 
         if (!bConfs) {
           throw new ProgrammingError("Confirmations empty");
         }
 
-        const prevConfirmStatus = _confirmStatusFromBlock(prevBlock, bConfs);
-        bConfs.push(wallet.getAddress());
-        const confirmStatus = _confirmStatusFromBlock(prevBlock, bConfs);
-        if (!prevConfirmStatus.final && confirmStatus.final) {
+        confirmations[blockId] = [...bConfs, wallet.getAddress()];
+        bConfs = confirmations[blockId]!;
+        const confirmStatus = prevBlock ? 
+          _confirmStatusFromBlock(prevBlock, bConfs)
+          : _confirmStatusForGenesis();
+        if (confirmStatus.final) {
           // console.log("headBlock: ", await chain.contract.getHead());
           // console.log("getBlockId(block): ", getBlockId(block.header));
           await chain.contract.finalizeAndExecute(block);
