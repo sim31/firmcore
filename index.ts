@@ -1,7 +1,7 @@
 import { IFirmCore } from './src/ifirmcore';
 import { FirmCore } from './src/firmcore-network-mock/firmcore';
 
-const _firmcore = new FirmCore(false, false);
+const _firmcore = new FirmCore(true, false);
 
 export * from './src/ifirmcore';
 

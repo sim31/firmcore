@@ -37,7 +37,6 @@
     "date-fns": "^2.29.3",
     "ethers": "^5.7.2",
     "firmcontracts": "github:sim31/firmcontracts",
-    "ganache": "^7.8.0",
     "utility-types": "^3.10.0"
   }
 }
