@@ -12,5 +12,6 @@ export type Address = string;
 
 import { WalletManager } from './src/wallet';
 import { IWalletManager } from './src/iwallet';
+import { BrowserWalletManager } from './src/wallet/browserWallet';
 
-export const walletManager = new WalletManager() as IWalletManager;
+export const walletManager = new BrowserWalletManager();
