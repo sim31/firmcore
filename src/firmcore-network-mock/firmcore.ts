@@ -230,7 +230,10 @@ async function _init(verbose: boolean = false, quiet: boolean = true) {
   _provider = new ethers.providers.JsonRpcProvider('http://localhost:60501');
   // _provider = new ethers.providers.Web3Provider(_underlyingProvider as any);
   _signer = _provider.getSigner(0);
-  console.log("_init 2");
+
+  const signerBalance = await _signer!.getBalance();
+  console.log('signer address: ', await _signer?.getAddress())
+  console.log('signerBalance: ', signerBalance.toBigInt().toString());
 
   detFactoryAddr = _deployDetFactory();
 
@@ -240,6 +243,8 @@ async function _init(verbose: boolean = false, quiet: boolean = true) {
   implLib = _deployFirmChainImpl(abiC);
 
   accSystemLib = _deployAccountSystemImpl();
+
+
 }
 
 async function _waitForInit() {
@@ -398,6 +403,8 @@ export class FirmCore implements IFirmCore {
 
         const signature = await _signBlock(w, block);
 
+        await _provider?.send('evm_mine', []);
+
         const rValue = await chain.contract.callStatic.extConfirm(
           block.header,
           wallet.getAddress(),
@@ -406,6 +413,8 @@ export class FirmCore implements IFirmCore {
         if (!rValue) {
           throw new Error("Contract returned false");
         }
+
+        await _provider?.send('evm_mine', []);
 
         const tx = await chain.contract.extConfirm(
           block.header,
@@ -429,6 +438,7 @@ export class FirmCore implements IFirmCore {
         if (confirmStatus.final) {
           // console.log("headBlock: ", await chain.contract.getHead());
           // console.log("getBlockId(block): ", getBlockId(block.header));
+          await _provider?.send('evm_mine', []);
           await chain.contract.finalizeAndExecute(block);
           const head = await chain.contract.getHead();
           assert(head === blockId, "head of the chain should have been updated");
@@ -470,6 +480,7 @@ export class FirmCore implements IFirmCore {
 
     const cs = await _waitForInit();
 
+    await _provider?.send('evm_mine', []);
     const { contract, genesisBl } = await _deployEFChain(cs.implLib, cs.accSystemLib, nargs);
 
     const bId = getBlockId(genesisBl.header);

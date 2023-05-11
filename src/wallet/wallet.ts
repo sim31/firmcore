@@ -1,6 +1,7 @@
 import { Wallet as EthWallet, utils } from 'ethers';
 import { Address, IWallet, IWalletCreator, IWalletManager, PublicKey, Signature } from '../iwallet';
 import { Signature as EthSig } from 'firmcontracts/interface/types';
+import { normalizeHexStr } from 'firmcontracts/interface/abi';
 
 
 export class Wallet implements IWallet {
@@ -11,7 +12,7 @@ export class Wallet implements IWallet {
   }
 
   getAddress(): Address {
-    return this._wallet.address;
+    return normalizeHexStr(this._wallet.address);
   }
 
   getPublicKey(): PublicKey {
