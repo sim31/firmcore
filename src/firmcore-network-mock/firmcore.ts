@@ -3,8 +3,7 @@ import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr
 import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots } from "../ifirmcore";
 import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain";
-// import * as detFactory from "firmcontracts/node_modules//deterministic-deployment-proxy/output/deployment.json";
-import * as detFactory from "firmcontracts/node_modules/@zoltu/deterministic-deployment-proxy/output/deployment.json"
+import { FirmContractDeployer } from 'firmcontracts/interface/deployer';
 import { getBlockBodyId, getBlockDigest, getBlockId, normalizeHexStr, randomAddressHex, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi";
 import { ZeroAddr, ConfirmerSet as FcConfirmerSet  } from 'firmcontracts/interface/types';
 import { timestampToDate } from '../helpers/date';
@@ -21,6 +20,7 @@ let abiLib: Promise<FirmChainAbi>;
 let implLib: Promise<FirmChainImpl>;
 let accSystemLib: Promise<AccountSystemImpl>;
 let detFactoryAddr: Promise<string>;
+let deployer: FirmContractDeployer;
 
 let _verbose: boolean = false;
 let _quiet: boolean = false;
@@ -46,135 +46,6 @@ const NullAccountAddr = ZeroAddr;
 // let _underlyingProvider: ethers.providers.JsonRpcProvider | undefined;
 let _provider: ethers.providers.JsonRpcProvider | undefined;
 let _signer: ethers.providers.JsonRpcSigner | undefined;
-
-function _getSigner() {
-  assert(_signer, "Should have signer set already");
-  return _signer!;
-}
-
-function _getProvider() {
-  assert(_provider, "Provider should be set");
-  return _provider!;
-}
-
-export async function _contractExists(address: AddressStr): Promise<boolean> {
-  const provider = _getProvider();
-
-  const code = await provider.getCode(address); 
-
-  return code !== '0x';
-}
-
-export async function _deployDetFactory() {
-  assert(_signer && _provider, "Should have signer set already");
-
-  const addr = normalizeHexStr("0x" + detFactory.address);
-
-  if (await _contractExists(addr)) {
-    if (!_quiet) {
-      console.log("Factory exists: ", addr);
-    }
-    return addr;
-  }
-
-  const signer = _signer!;
-  const response = await signer.sendTransaction({
-    to: "0x" + detFactory.signerAddress,
-    value: "0x" + detFactory.gasPrice * detFactory.gasLimit,
-  });
-  const receipt = await response.wait();
-  // console.log("receipt: ", receipt);
-  // console.log("balance: ", await ethers.provider.getBalance("0x" + detFactory.signerAddress));
-  
-  const tx = await _provider!.sendTransaction(
-    "0x" + detFactory.transaction
-  );
-  // console.log("ok");
-  await tx.wait();
-
-  if (!_quiet) {
-    console.log("Factory deployed: ", addr);
-  }
-
-  return addr;
-}
-
-export async function detDeployContract(bytecode: BytesLike, name: string) {
-  assert(_signer && _provider, "Should have signer set already");
-  const factoryAddr = await detFactoryAddr;
-
-  const initCodeHash = ethers.utils.keccak256(bytecode ?? '0x00');
-  const expAddr = normalizeHexStr(ethers.utils.getCreate2Address(factoryAddr, ZeroId, initCodeHash));
-
-  if (await _contractExists(expAddr)) {
-    if (!_quiet) {
-      console.log(`Contract ${name} exists: ${expAddr}`);
-    }
-    return expAddr;
-  }
-
-  console.log('ok');
-
-    // { gasLimit: 9552000 }
-  const addr = normalizeHexStr(await _provider!.call({ to: factoryAddr, data: bytecode, gasLimit: 10552000 }));
-
-  console.log('ok1', addr);
-  const resp = await _signer!.sendTransaction({
-    to: detFactory.address, data: bytecode
-  });
-  await resp.wait();
-
-  console.log('ok2');
-
-  assert(await _provider!.getCode(addr) !== '0x', 'Failed to set code');
-
-  assert(
-    addr === expAddr,
-    'Address unexpected'
-  );
-
-  if (!_quiet) {
-    console.log(`Contract ${name} deployed: ${addr}`);
-  }
-
-  return addr;
-}
-
-async function _deployAbi() {
-  assert(_signer, "Should have signer set already");
-
-  const factory = new FirmChainAbi__factory(_signer);
-  const bytecode = await factory.getDeployTransaction().data;
-  assert(bytecode !== undefined, 'bytecode should be defined');
-
-  const addr = await detDeployContract(bytecode ?? '', 'FirmChainAbi');
-
-  return factory.attach(addr);
-}
-
-async function _deployFirmChainImpl(abiContr: FirmChainAbi) {
-  assert(_signer, "Should have signer set already");
-  const factory = new FirmChainImpl__factory({
-    ["contracts/FirmChainAbi.sol:FirmChainAbi"]: abiContr.address
-  }, _signer);
-
-  const bytecode = await factory.getDeployTransaction().data;
-  assert(bytecode !== undefined, 'bytecode should be defined');
-  const addr = await detDeployContract(bytecode ?? '', 'FirmChainImpl');
-
-  return factory.attach(addr);
-}
-
-async function _deployAccountSystemImpl() {
-  assert(_signer, "Should have signer set already");
-  const factory = new AccountSystemImpl__factory(_signer);
-
-  const bytecode = await factory.getDeployTransaction().data;
-  assert(bytecode !== undefined, 'bytecode should be defined');
-  const addr = await detDeployContract(bytecode ?? '', 'AccountSystemImpl');
-
-  return factory.attach(addr);
-}
 
 function _storeAccount(account: Account) {
   const metadataId = randomBytes32Hex();
@@ -214,7 +85,7 @@ async function _deployEFChain(
   );
   const bytecode = dtx.data;
   assert(bytecode !== undefined, 'bytecode should be defined');
-  const addr = await detDeployContract(bytecode ?? '', `${args.name} (EFChain)`);
+  const addr = await deployer.detDeployContract(bytecode ?? '', `${args.name} (EFChain)`);
 
   genesisBl.contract = addr;
 
@@ -235,21 +106,20 @@ async function _init(verbose: boolean = false, quiet: boolean = true) {
   console.log('signer address: ', await _signer?.getAddress())
   console.log('signerBalance: ', signerBalance.toBigInt().toString());
 
-  detFactoryAddr = _deployDetFactory();
+  deployer = new FirmContractDeployer(_provider);
+  await deployer.init();
 
-  abiLib = _deployAbi();
+  abiLib = deployer.deployAbi();
   const abiC = await abiLib;
 
-  implLib = _deployFirmChainImpl(abiC);
+  implLib = deployer.deployFirmChainImpl(abiC);
 
-  accSystemLib = _deployAccountSystemImpl();
-
+  accSystemLib = deployer.deployAccountSystemImpl();
 
 }
 
 async function _waitForInit() {
   return {
-    factoryAddr: await detFactoryAddr,
     abiLib: await abiLib,
     implLib: await implLib,
     accSystemLib: await accSystemLib,
@@ -358,6 +228,7 @@ export class FirmCore implements IFirmCore {
   readonly NullAddr = ZeroAddr;
   readonly NullBlockId = ZeroId;
   readonly NullAccountId = NullAccountId;
+  readonly NullIPFSLink = ZeroId;
 
   private _verbose: boolean = false;
   private _quiet: boolean = true;
@@ -630,7 +501,7 @@ export class FirmCore implements IFirmCore {
 
           directoryId: () => {
             return _accessState(chain, id, async () => {
-              const dir = await chain.contract.directoryId();
+              const dir = await chain.contract.getDir();
               if (dir === ZeroId) {
                 return undefined;
               } else {

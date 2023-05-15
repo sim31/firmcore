@@ -534,6 +534,7 @@ export interface IFirmCore {
   readonly NullAddr: Address;
   readonly NullBlockId: BlockId;
   readonly NullAccountId: AccountId;
+  readonly NullIPFSLink: IPFSLink;
 
   init(): Promise<void>;
   shutDown(): Promise<void>;
