@@ -15,6 +15,7 @@ import NotFound from '../exceptions/NotFound';
 import { Wallet } from "../wallet";
 import assert from '../helpers/assert';
 import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet';
+import { bytes32StrToCid0, cid0ToBytes32Str } from 'firmcontracts/interface/cid';
 
 let abiLib: Promise<FirmChainAbi>;
 let implLib: Promise<FirmChainImpl>;
@@ -228,7 +229,7 @@ export class FirmCore implements IFirmCore {
   readonly NullAddr = ZeroAddr;
   readonly NullBlockId = ZeroId;
   readonly NullAccountId = NullAccountId;
-  readonly NullIPFSLink = ZeroId;
+  readonly NullIPFSLink = bytes32StrToCid0(ZeroId);
 
   private _verbose: boolean = false;
   private _quiet: boolean = true;
@@ -505,7 +506,8 @@ export class FirmCore implements IFirmCore {
               if (dir === ZeroId) {
                 return undefined;
               } else {
-                return dir;
+                const cid = bytes32StrToCid0(dir);
+                return cid;
               }
             })
           }
@@ -602,8 +604,9 @@ export class FirmCore implements IFirmCore {
               createMsg(chain.contract, 'removeAccount', [msg.accountId])
             );
           } else if (msg.name === 'setDir') {
+            const b32 = cid0ToBytes32Str(msg.dir);
             serializedMsgs.push(
-              createMsg(chain.contract, 'setDir', [msg.dir])
+              createMsg(chain.contract, 'setDir', [b32])
             );
           } else if (msg.name === 'updateAccount') {
             const metadataId = _storeAccount(msg.newAccount);
