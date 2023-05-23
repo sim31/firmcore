@@ -9,7 +9,7 @@ import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import assert from "../helpers/assert";
 import { isDefined } from "../helpers/defined";
 import { defaultThreshold } from '../helpers/confirmerSet';
-import { FsEntries } from '../helpers/car';
+import { FsEntries, createCARFile } from '../helpers/car';
 import InvalidArgument from '../exceptions/InvalidArgument';
 import stringify from 'json-stable-stringify-without-jsonify';
 import OpNotSupprtedError from '../exceptions/OpNotSupported';
@@ -19,6 +19,7 @@ import { IWallet, Signature } from '../iwallet';
 import { getBlockDigest, randomBytes32Hex } from 'firmcontracts/interface/abi';
 import NotFound from '../exceptions/NotFound';
 import { Socket, io } from 'socket.io-client';
+import { ClientToServerEvents, ServerToClientEvents } from './socketTypes';
 
 export class FirmCoreFNode implements IFirmCore {
   readonly NullAddr = ZeroAddr;
@@ -39,7 +40,7 @@ export class FirmCoreFNode implements IFirmCore {
   private _provider: ethers.providers.JsonRpcProvider | undefined;
   private _signer: ethers.providers.JsonRpcSigner | undefined;
 
-  private _socket: Socket | undefined;
+  private _socket: Socket<ServerToClientEvents, ClientToServerEvents> | undefined;
 
   constructor(verbose: boolean = false, quiet: boolean = true) {
     this._verbose = verbose;
@@ -56,9 +57,6 @@ export class FirmCoreFNode implements IFirmCore {
     this._signer = this._provider.getSigner(0);
 
     this._socket = io('http://localhost:60500');
-    this._socket.on('hello', (arg) => {
-      console.log('received event hello: ', arg);
-    })
 
     const signerBalance = await this._signer!.getBalance();
     console.log('signer address: ', await this._signer?.getAddress())
@@ -81,6 +79,7 @@ export class FirmCoreFNode implements IFirmCore {
     return isDefined([
       this._provider, this._signer, this._deployer,
       this._abiLib, this._implLib, this._accSystemLib,
+      this._socket,
     ]);
   }
 
@@ -93,25 +92,27 @@ export class FirmCoreFNode implements IFirmCore {
       abiLib: this._abiLib!,
       implLib: this._implLib!,
       accSystemLib: this._accSystemLib!,
+      socket: this._socket!,
     }
   }
 
   async createEFChain(args: EFConstructorArgs): Promise<EFChain> {
     // TODO: Construct EFConstructorArgsFull from args
-    // let nargs: Required<EFConstructorArgs, 'threshold'>;
-    // if (args.threshold) {
-    //   if (Number.isNaN(args.threshold) || args.threshold <= 0) {
-    //     throw new Error('Threshold has to be number > 0');
-    //   }
-    //   nargs = { ...args, threshold: args.threshold };
-    // } else {
-    //   nargs = { ...args, threshold: defaultThreshold(args.confirmers) };
-    // }
+    let nargs: Required<EFConstructorArgs, 'threshold'>;
+    if (args.threshold) {
+      if (Number.isNaN(args.threshold) || args.threshold <= 0) {
+        throw new Error('Threshold has to be number > 0');
+      }
+      nargs = { ...args, threshold: args.threshold };
+    } else {
+      nargs = { ...args, threshold: defaultThreshold(args.confirmers) };
+    }
 
-    // const { provider, implLib, accSystemLib } = this._getInitialized();
+    const { provider, implLib, accSystemLib } = this._getInitialized();
 
-    // await provider.send('evm_mine', []);
+    await provider.send('evm_mine', []);
     // const { contract, genesisBl } = await this._deployEFChain(implLib, accSystemLib, nargs);
+    await this._deployEFChain(implLib, accSystemLib, nargs);
 
     throw new NotImplementedError();
 
@@ -317,46 +318,44 @@ export class FirmCoreFNode implements IFirmCore {
     accSystemImpl: AccountSystemImpl,
     args: Required<EFConstructorArgs, 'threshold'>,
   ) {
-    throw new NotImplementedError();
-    // const { deployer } = this._getInitialized();
+    const { deployer, socket } = this._getInitialized();
 
-    // const factory = new EdenPlusFractal__factory({
-    //   ["contracts/FirmChainImpl.sol:FirmChainImpl"]: fchainImpl.address,
-    //   ["contracts/AccountSystemImpl.sol:AccountSystemImpl"]: accSystemImpl.address,
-    // }, this._signer);
+    const factory = new EdenPlusFractal__factory({
+      ["contracts/FirmChainImpl.sol:FirmChainImpl"]: fchainImpl.address,
+      ["contracts/AccountSystemImpl.sol:AccountSystemImpl"]: accSystemImpl.address,
+    }, this._signer);
 
-    // const encoder = new TextEncoder();
+    const encoder = new TextEncoder();
 
-    // const fsEntries: FsEntries = [
-    //   {
-    //     path: 'up'
-    //   },
-    //   {
-    //     path: 'up/accounts'
-    //   },
-    //   {
-    //     path: 'sc'
-    //   },
-    //   {
-    //     path: 'sc/EdenPlusFractal.json',
-    //     content: encoder.encode(stringify(efBuild)),
-    //   },
-    //   {
-    //     path: 'down'
-    //   },
-    //   {
-    //     path: 'down/in'
-    //   }
-    // ];
+    const fsEntries: FsEntries = [
+      {
+        path: 'abi.json',
+        content: encoder.encode(stringify(efBuild.abi))
+      },
+      {
+        path: 'accounts'
+      },
+    ];
 
-    // for (const account of args.confirmers) {
-    //   const path = this.determineAccountPath(account, fsEntries);
+    for (const account of args.confirmers) {
+      const path = this.determineAccountPath(account, fsEntries);
 
-    //   fsEntries.push({
-    //     path,
-    //     content: encoder.encode(stringify(account))
-    //   });
-    // }
+      fsEntries.push({
+        path,
+        content: encoder.encode(stringify(account))
+      });
+    }
+
+    const carFile = await createCARFile(fsEntries);
+
+    const importPath = `/${deployer.getFactoryAddress()}/above/` 
+    socket.emit('import', deployer.getFactoryAddress(), carFile, (err) => {
+      if (err !== undefined) {
+        console.error('Failed importing: ', err);
+      }
+    });
+
+
 
     // const confs: AccountValue[] = args.confirmers.map((conf) => {
     //   const metadataId = this._storeAccount(conf);
