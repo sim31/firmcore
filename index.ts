@@ -1,5 +1,5 @@
 import { IFirmCore } from './src/ifirmcore';
-import { FirmCore } from './src/firmcore-network-mock/firmcore';
+import { FirmCoreFNode as FirmCore } from './src/firmcore-firmnode';
 
 const _firmcore = new FirmCore(true, false);
 
