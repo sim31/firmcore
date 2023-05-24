@@ -4,7 +4,7 @@ import { MemoryBlockstore } from 'blockstore-core';
 
 export type FsEntries = Array<FileCandidate | DirectoryCandidate>;
 
-export async function createCARFile(entries: FsEntries): Promise<Blob> {
+export async function createCARFile(entries: FsEntries): Promise<BlobPart[]> {
   const blockstore = new MemoryBlockstore();
 
   let rootEntry: ImportResult | undefined;
@@ -18,17 +18,19 @@ export async function createCARFile(entries: FsEntries): Promise<Blob> {
 
     const { writer, out } = CarWriter.create(rootCID);
     for await (const block of blockstore.getAll()) {
-      await writer.put({ ...block, bytes: block.block });
+      writer.put({ ...block, bytes: block.block });
     }
-    await writer.close()
+    writer.close()
 
     const carParts = new Array<Uint8Array>();
     for await (const chunk of out) {
       carParts.push(chunk)
     }
-    return new Blob(carParts, {
-      type: 'application/car',
-    });
+
+    return carParts;
+    // return new Blob(carParts, {
+    //   type: 'application/car',
+    // });
   } else {
     throw new Error('Unable to determine import into unixfs');
   }

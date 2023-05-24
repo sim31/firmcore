@@ -292,7 +292,7 @@ export class FirmCoreFNode implements IFirmCore {
   ): string {
     // Try to assign a name first
     if (account.name !== undefined) {
-      const wantedPath = `up/accounts/${account.name}.json`;
+      const wantedPath = `accounts/${account.name}.json`;
       const existingName = entries.find(
         (entry) => entry.path === wantedPath
       );
@@ -330,7 +330,7 @@ export class FirmCoreFNode implements IFirmCore {
     const fsEntries: FsEntries = [
       {
         path: 'abi.json',
-        content: encoder.encode(stringify(efBuild.abi))
+        content: encoder.encode(stringify(efBuild.abi, { space: 2 }))
       },
       {
         path: 'accounts'
@@ -342,13 +342,12 @@ export class FirmCoreFNode implements IFirmCore {
 
       fsEntries.push({
         path,
-        content: encoder.encode(stringify(account))
+        content: encoder.encode(stringify(account, { space: 2 }))
       });
     }
 
     const carFile = await createCARFile(fsEntries);
 
-    const importPath = `/${deployer.getFactoryAddress()}/above/` 
     socket.emit('import', deployer.getFactoryAddress(), carFile, (err) => {
       if (err !== undefined) {
         console.error('Failed importing: ', err);
@@ -513,99 +512,99 @@ export class FirmCoreFNode implements IFirmCore {
     };
   }
   async createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer> {
-    throw new NotImplementedError();
-    // const { provider } = this._getInitialized();
-    // let w: Wallet;
-    // if (!('ethSign' in wallet && '_wallet' in wallet && typeof wallet['ethSign'] === 'function')) {
-    //   throw new OpNotSupprtedError("Wallet type unsupported");
-    // } else {
-    //   w = (wallet as unknown) as Wallet;
-    // }
-    // return {
-    //   address: wallet.getAddress(),
-    //   confirm: async (blockId: BlockId) => {
-    //     const block = this._st.blocks[blockId];        
-    //     if (!block) {
-    //       throw new NotFound("Block not found");
-    //     }
-    //     const prevBlock = this._st.blocks[utils.hexlify(block.header.prevBlockId)];
-    //     const chain = this._st.chains[block.contract ?? 0];
-    //     if (!chain) {
-    //       throw new NotFound("Chain not found");
-    //     }
-    //     const blockNum = this._st.blockNums[blockId];
-    //     if (blockNum === undefined) {
-    //       throw new ProgrammingError("Block number not stored");
-    //     }
+    const { provider } = this._getInitialized();
+    let w: Wallet;
+    if (!('ethSign' in wallet && '_wallet' in wallet && typeof wallet['ethSign'] === 'function')) {
+      throw new OpNotSupprtedError("Wallet type unsupported");
+    } else {
+      w = (wallet as unknown) as Wallet;
+    }
+    return {
+      address: wallet.getAddress(),
+      confirm: async (blockId: BlockId) => {
+        throw new NotImplementedError();
+        // const block = this._st.blocks[blockId];        
+        // if (!block) {
+        //   throw new NotFound("Block not found");
+        // }
+        // const prevBlock = this._st.blocks[utils.hexlify(block.header.prevBlockId)];
+        // const chain = this._st.chains[block.contract ?? 0];
+        // if (!chain) {
+        //   throw new NotFound("Chain not found");
+        // }
+        // const blockNum = this._st.blockNums[blockId];
+        // if (blockNum === undefined) {
+        //   throw new ProgrammingError("Block number not stored");
+        // }
 
-    //     const ordBlocks = this._st.orderedBlocks[chain.contract.address];
-    //     if (!ordBlocks || !ordBlocks[blockNum]) {
-    //       throw new ProgrammingError("Block not saved into orderedBlocks index");
-    //     }
+        // const ordBlocks = this._st.orderedBlocks[chain.contract.address];
+        // if (!ordBlocks || !ordBlocks[blockNum]) {
+        //   throw new ProgrammingError("Block not saved into orderedBlocks index");
+        // }
 
-    //     const signature = await this._signBlock(w, block);
+        // const signature = await this._signBlock(w, block);
 
-    //     await provider.send('evm_mine', []);
+        // await provider.send('evm_mine', []);
 
-    //     const rValue = await chain.contract.callStatic.extConfirm(
-    //       block.header,
-    //       wallet.getAddress(),
-    //       signature,
-    //     );
-    //     if (!rValue) {
-    //       throw new Error("Contract returned false");
-    //     }
+        // const rValue = await chain.contract.callStatic.extConfirm(
+        //   block.header,
+        //   wallet.getAddress(),
+        //   signature,
+        // );
+        // if (!rValue) {
+        //   throw new Error("Contract returned false");
+        // }
 
-    //     await provider.send('evm_mine', []);
+        // await provider.send('evm_mine', []);
 
-    //     const tx = await chain.contract.extConfirm(
-    //       block.header,
-    //       wallet.getAddress(),
-    //       signature,
-    //     );
-    //     // Will throw if tx fails
-    //     await tx.wait()
+        // const tx = await chain.contract.extConfirm(
+        //   block.header,
+        //   wallet.getAddress(),
+        //   signature,
+        // );
+        // // Will throw if tx fails
+        // await tx.wait()
 
-    //     let bConfs = this._st.confirmations[blockId];
+        // let bConfs = this._st.confirmations[blockId];
 
-    //     if (!bConfs) {
-    //       throw new ProgrammingError("Confirmations empty");
-    //     }
+        // if (!bConfs) {
+        //   throw new ProgrammingError("Confirmations empty");
+        // }
 
-    //     this._st.confirmations[blockId] = [...bConfs, wallet.getAddress()];
-    //     bConfs = this._st.confirmations[blockId]!;
-    //     const confirmStatus = prevBlock ? 
-    //       this._confirmStatusFromBlock(prevBlock, bConfs)
-    //       : this._confirmStatusForGenesis();
-    //     if (confirmStatus.final) {
-    //       // console.log("headBlock: ", await chain.contract.getHead());
-    //       // console.log("getBlockId(block): ", getBlockId(block.header));
-    //       await provider.send('evm_mine', []);
-    //       await chain.contract.finalizeAndExecute(block);
-    //       const head = await chain.contract.getHead();
-    //       assert(head === blockId, "head of the chain should have been updated");
-    //       // console.log("headBlock2: ", await chain.contract.getHead());
-    //       // console.log("head: ", head);
-    //       // console.log("blockId: ", blockId);
-    //       chain.headBlockId = head;
-    //       const ch = await this.getChain(chain.contract.address);
-    //       assert(ch, "should be able to retrieve chain");
-    //       const bl = await ch!.blockById(blockId);
-    //       assert(bl, "should be able to retrieve EFBlock");
-    //       this._st.states[blockId] = await getEFChainState(bl!);
-    //     } else {
-    //       // Update confirmation state
-    //       this._st.states[blockId] = {
-    //         delegates: emptyDelegates,
-    //         directoryId: ZeroId,
-    //         confirmations: bConfs,
-    //         confirmationStatus: confirmStatus,
-    //         confirmerSet: this._confirmerSetFromBlock(block),
-    //         allAccounts: false,
-    //       }
-    //     }
-    //   }
-    // };
+        // this._st.confirmations[blockId] = [...bConfs, wallet.getAddress()];
+        // bConfs = this._st.confirmations[blockId]!;
+        // const confirmStatus = prevBlock ? 
+        //   this._confirmStatusFromBlock(prevBlock, bConfs)
+        //   : this._confirmStatusForGenesis();
+        // if (confirmStatus.final) {
+        //   // console.log("headBlock: ", await chain.contract.getHead());
+        //   // console.log("getBlockId(block): ", getBlockId(block.header));
+        //   await provider.send('evm_mine', []);
+        //   await chain.contract.finalizeAndExecute(block);
+        //   const head = await chain.contract.getHead();
+        //   assert(head === blockId, "head of the chain should have been updated");
+        //   // console.log("headBlock2: ", await chain.contract.getHead());
+        //   // console.log("head: ", head);
+        //   // console.log("blockId: ", blockId);
+        //   chain.headBlockId = head;
+        //   const ch = await this.getChain(chain.contract.address);
+        //   assert(ch, "should be able to retrieve chain");
+        //   const bl = await ch!.blockById(blockId);
+        //   assert(bl, "should be able to retrieve EFBlock");
+        //   this._st.states[blockId] = await getEFChainState(bl!);
+        // } else {
+        //   // Update confirmation state
+        //   this._st.states[blockId] = {
+        //     delegates: emptyDelegates,
+        //     directoryId: ZeroId,
+        //     confirmations: bConfs,
+        //     confirmationStatus: confirmStatus,
+        //     confirmerSet: this._confirmerSetFromBlock(block),
+        //     allAccounts: false,
+        //   }
+        // }
+      }
+    };
   }
 
   randomAddress(): Address {
