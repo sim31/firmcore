@@ -1,5 +1,6 @@
 import { AddressStr } from "firmcontracts/interface/types";
 import { CID } from '@ipld/car/types/api';
+import { Message } from "./message";
 
 export interface ImportResult {
   roots: CID[];
@@ -21,6 +22,11 @@ export interface ClientToServerEvents {
   import: (
     to: AddressStr,
     carFile: BlobPart[],
+    callback: ErrorCallback
+  ) => void;
+
+  send: (
+    msg: Message,
     callback: ErrorCallback
   ) => void;
 }
