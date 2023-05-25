@@ -19,7 +19,7 @@ import { IWallet, Signature } from '../iwallet';
 import { getBlockDigest, randomBytes32Hex } from 'firmcontracts/interface/abi';
 import NotFound from '../exceptions/NotFound';
 import { Socket, io } from 'socket.io-client';
-import { ClientToServerEvents, ServerToClientEvents } from './socketTypes';
+import { ClientToServerEvents, ServerToClientEvents, isError } from './socketTypes';
 
 export class FirmCoreFNode implements IFirmCore {
   readonly NullAddr = ZeroAddr;
@@ -348,9 +348,11 @@ export class FirmCoreFNode implements IFirmCore {
 
     const carFile = await createCARFile(fsEntries);
 
-    socket.emit('import', deployer.getFactoryAddress(), carFile, (err) => {
-      if (err !== undefined) {
-        console.error('Failed importing: ', err);
+    socket.emit('import', deployer.getFactoryAddress(), carFile, (res) => {
+      if (isError(res)) {
+        console.error('Failed importing: ', res);
+      } else {
+        console.log('import result: ', res.roots);
       }
     });
 
