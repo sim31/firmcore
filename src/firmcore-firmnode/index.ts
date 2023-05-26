@@ -1,7 +1,7 @@
 import { Required } from 'utility-types';
-import { AccountSystemImpl, AccountValue, EdenPlusFractal__factory, FirmChainAbi, FirmChainImpl, OptExtendedBlockValue, ZeroAddr, ZeroId, ConfirmerSet as FcConfirmerSet, ConfirmerOpValue } from "firmcontracts/interface/types";
+import { AccountSystemImpl, AccountValue, EdenPlusFractal__factory, FirmChainAbi, FirmChainImpl, OptExtendedBlockValue, ZeroAddr, ZeroId, ConfirmerSet as FcConfirmerSet, ConfirmerOpValue, AddressStr } from "firmcontracts/interface/types";
 import { Account, AccountId, AccountWithAddress, Address, BlockConfirmer, BlockId, Chain, ConfirmationStatus, ConfirmerMap, ConfirmerOp, ConfirmerOpId, ConfirmerSet, EFChain, EFConstructorArgs, IFirmCore, IPFSLink } from "../ifirmcore";
-import { bytes32StrToCid0 } from "firmcontracts/interface/cid";
+import { bytes32StrToCid0, cid0ToBytes32Str } from "firmcontracts/interface/cid";
 import { FirmContractDeployer } from "firmcontracts/interface/deployer";
 import * as efBuild from 'firmcontracts/artifacts/contracts/EdenPlusFractal.sol/EdenPlusFractal.json';
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain";
@@ -9,7 +9,7 @@ import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import assert from "../helpers/assert";
 import { isDefined } from "../helpers/defined";
 import { defaultThreshold } from '../helpers/confirmerSet';
-import { FsEntries, createCARFile } from '../helpers/car';
+import { FsEntries, anyToFile, createCARFile, getFileCID, getFileCIDBytes, objectToFile } from '../helpers/car';
 import InvalidArgument from '../exceptions/InvalidArgument';
 import stringify from 'json-stable-stringify-without-jsonify';
 import OpNotSupprtedError from '../exceptions/OpNotSupported';
@@ -19,7 +19,8 @@ import { IWallet, Signature } from '../iwallet';
 import { getBlockDigest, randomBytes32Hex } from 'firmcontracts/interface/abi';
 import NotFound from '../exceptions/NotFound';
 import { Socket, io } from 'socket.io-client';
-import { ClientToServerEvents, ServerToClientEvents, isError } from './socketTypes';
+import { ClientToServerEvents, ServerToClientEvents, isError, resIsAppliedTx } from './socketTypes';
+import { CInputEncMsg, newCInputEncMsg } from './message';
 
 export class FirmCoreFNode implements IFirmCore {
   readonly NullAddr = ZeroAddr;
@@ -111,8 +112,9 @@ export class FirmCoreFNode implements IFirmCore {
     const { provider, implLib, accSystemLib } = this._getInitialized();
 
     await provider.send('evm_mine', []);
-    // const { contract, genesisBl } = await this._deployEFChain(implLib, accSystemLib, nargs);
-    await this._deployEFChain(implLib, accSystemLib, nargs);
+    const { contract, genesisBl } = await this._deployEFChain(implLib, accSystemLib, nargs);
+    console.log('Contract created: ', contract.address);
+    // await this._deployEFChain(implLib, accSystemLib, nargs);
 
     throw new NotImplementedError();
 
@@ -140,14 +142,6 @@ export class FirmCoreFNode implements IFirmCore {
     //   return chain;
     // }
   }
-
-  _storeAccount(account: Account) {
-    throw new NotImplementedError();
-    // const metadataId = randomBytes32Hex();
-    // this._st.fullAccounts[metadataId] = account;
-    // return metadataId;
-  }
-
 
   async getChain(address: Address): Promise<EFChain | undefined> {
     throw new NotImplementedError();
@@ -320,95 +314,89 @@ export class FirmCoreFNode implements IFirmCore {
   ) {
     const { deployer, socket } = this._getInitialized();
 
-    const factory = new EdenPlusFractal__factory({
-      ["contracts/FirmChainImpl.sol:FirmChainImpl"]: fchainImpl.address,
-      ["contracts/AccountSystemImpl.sol:AccountSystemImpl"]: accSystemImpl.address,
-    }, this._signer);
+    // Upload account metadata and abi files (our next transaction will reference these things)
 
-    const encoder = new TextEncoder();
-
+    const abiFile = anyToFile(efBuild.abi);
     const fsEntries: FsEntries = [
       {
-        path: 'abi.json',
-        content: encoder.encode(stringify(efBuild.abi, { space: 2 }))
+        ...abiFile,
+        path: 'abi.json'
       },
       {
         path: 'accounts'
       },
     ];
 
+    const confs: AccountValue[] = [];
     for (const account of args.confirmers) {
-      const path = this.determineAccountPath(account, fsEntries);
+      const file = objectToFile(account);
+      file.path = this.determineAccountPath(account, fsEntries);
+      fsEntries.push(file);
 
-      fsEntries.push({
-        path,
-        content: encoder.encode(stringify(account, { space: 2 }))
-      });
+      // Compute account structure for EVM as well
+      const cidBytes = await getFileCIDBytes(file);
+      confs.push({
+        addr: account.address,
+        metadataId: cidBytes
+      })
     }
 
-    const carFile = await createCARFile(fsEntries);
+    const { parts } = await createCARFile(fsEntries);
 
-    socket.emit('import', deployer.getFactoryAddress(), carFile, (res) => {
-      if (isError(res)) {
-        console.error('Failed importing: ', res);
-      } else {
-        console.log('import result: ', res.roots);
-      }
+    const importPromise = new Promise((resolve, reject) => {
+      socket.emit('import', deployer.getFactoryAddress(), parts, (res) => {
+        if (isError(res)) {
+          console.error('Failed importing: ', res);
+          reject(res);
+        } else {
+          console.log('import result: ', res.roots);
+          resolve(res);
+        }
+      });
+    });
+    await importPromise;
+
+    const factory = new EdenPlusFractal__factory({
+      ["contracts/FirmChainImpl.sol:FirmChainImpl"]: fchainImpl.address,
+      ["contracts/AccountSystemImpl.sol:AccountSystemImpl"]: accSystemImpl.address,
+    }, this._signer);
+
+    const confOps = confs.map(conf => {
+      return createAddConfirmerOp(conf.addr, 1);
     });
 
+    const genesisBl = await createGenesisBlockVal([], ZeroId, confOps, args.threshold);
 
+    const abiCIDBytes = await getFileCIDBytes(abiFile);
 
-    // const confs: AccountValue[] = args.confirmers.map((conf) => {
-    //   const metadataId = this._storeAccount(conf);
-    //   return {
-    //     addr: conf.address,
-    //     metadataId,
-    //   }
-    // });
-    // const confOps = confs.map(conf => {
-    //   return createAddConfirmerOp(conf.addr, 1);
-    // });
+    const dtx = await factory.getDeployTransaction(
+      genesisBl,
+      confs,
+      args.threshold,
+      args.name, args.symbol,
+      abiCIDBytes
+    );
+    assert(dtx.data !== undefined, 'Deploy tx cannot be empty');
+    const inputMsg = newCInputEncMsg(deployer.getFactoryAddress(), dtx.data!.toString());
 
-    // const genesisBl = await createGenesisBlockVal([], ZeroId, confOps, args.threshold);
-
-    // const dtx = await factory.getDeployTransaction(
-    //   genesisBl,
-    //   confs,
-    //   args.threshold,
-    //   args.name, args.symbol,
-    // );
+    const sendPromise = new Promise<AddressStr>((resolve, reject) => {
+      socket.emit('send', inputMsg, (result) => {
+        if (result.error !== undefined) {
+          reject(`Error response sending ${inputMsg}\n Error: ${result.error}`);
+        } else if (resIsAppliedTx(result)) {
+          if (result.contractsCreated?.at(0) !== undefined) {
+            resolve(result.contractsCreated[0]!);
+          } else {
+            reject(`Did not receive deployed address. ${inputMsg}`);
+          }
+        } else {
+          reject(`Failed to apply tx ${inputMsg}`);
+        }
+      });
+    });
+    const addr = await sendPromise;
     
-    // const bytecode = dtx.data;
-    // assert(bytecode !== undefined, 'bytecode should be defined');
-    // const addr = await deployer.detDeployContract(bytecode ?? '', `${args.name} (EFChain)`);
-
-    // genesisBl.contract = addr;
-
-    // const contract = factory.attach(addr);
-
-    // const ptx = contract.interface.parseTransaction(contract.deployTransaction);
-    // const deployDesc = { 
-    //   deps: [],
-    //   name: ptx.name,
-    //   args: ptx.args,
-    //   gasLimit: contract.deployTransaction.gasLimit,
-    //   gasPrice: contract.deployTransaction.gasPrice,
-    // }
-
-    // const encodedDeploy = encoder.encode(stringify(deployDesc));
-
-    // fsEntries.push(
-    //   {
-    //     path: 'sc/deploy.json',
-    //     content: encodedDeploy,
-    //   },
-    //   {
-    //     path: 'down/in/deploy.json',
-    //     content: encodedDeploy,
-    //   }
-    // );
-
-    // return { contract: factory.attach(addr), genesisBl };
+    return { contract: factory.attach(addr), genesisBl };
   }
 
   // TODO:

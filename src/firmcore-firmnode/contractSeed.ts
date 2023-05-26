@@ -1,8 +1,8 @@
 import { IPFSLink } from 'firmcontracts/interface/types'
-import { ContractInput, ContractTxInput } from './contractInput'
+import { CInputEncMsg, CInputDecMsg, CInputTxMsg } from './message'
 
 export interface ContractSeed {
   // TODO: better type
   abiCID?: IPFSLink
-  deploymentTx: ContractInput | ContractTxInput
+  deploymentMsg: CInputEncMsg | CInputTxMsg | CInputDecMsg
 }

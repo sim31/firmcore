@@ -18,7 +18,7 @@ export const CInputDecMsgCodec = t.intersection([
   CInputDecCodec,
   t.type({ type: t.literal('ContractInput') })
 ]);
-export type CInputMsg = t.TypeOf<typeof CInputDecMsgCodec>;
+export type CInputDecMsg = t.TypeOf<typeof CInputDecMsgCodec>;
 
 export const CInputEncMsgCodec = t.intersection([
   MessageCodec,
@@ -26,6 +26,9 @@ export const CInputEncMsgCodec = t.intersection([
   t.type({ type: t.literal('ContractInputEncoded') })
 ])
 export type CInputEncMsg = t.TypeOf<typeof CInputEncMsgCodec>;
+export function newCInputEncMsg(to: string, data: string, gasLimit?: number): CInputEncMsg {
+  return { type: 'ContractInputEncoded', to, data, gasLimit };
+}
 
 export const CInputTxMsgCodec = t.intersection([
   MessageCodec,
@@ -33,6 +36,9 @@ export const CInputTxMsgCodec = t.intersection([
   t.type({ type: t.literal('ContractTxMsg') })
 ]);
 export type CInputTxMsg = t.TypeOf<typeof CInputTxMsgCodec>;
+export function newCInputTxMsg(to: string, transaction: string): CInputTxMsg {
+  return { type: 'ContractTxMsg', to, transaction };
+}
 
 // Messages which are meant as inputs to smart contracts
 export const CInputMsgCodec = t.union([

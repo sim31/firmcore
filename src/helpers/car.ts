@@ -3,6 +3,7 @@ import { importer, type FileCandidate, type DirectoryCandidate, ImportResult } f
 import { MemoryBlockstore } from 'blockstore-core';
 import { CID } from 'multiformats';
 import stringify from 'json-stable-stringify-without-jsonify';
+import { cid0ToBytes32Str } from 'firmcontracts/interface/cid';
 
 export type FsEntries = Array<FileCandidate | DirectoryCandidate>;
 
@@ -17,7 +18,16 @@ export async function getFileCID(file: FileCandidate) {
   return rootEntry?.cid;
 }
 
-export function objectToFile(obj: Record<string, unknown>) {
+export async function getFileCIDBytes(file: FileCandidate) {
+  const cid = await getFileCID(file);
+  if (cid === undefined) {
+    throw new Error(`Unable to get cid of ${file.path}`);
+  }
+  const cidBytes = cid0ToBytes32Str(cid.toV0().toString());
+  return cidBytes;
+}
+
+export function objectToFile(obj: Record<string, unknown>): FileCandidate {
   const encoder = new TextEncoder();
   const file = {
     content: encoder.encode(stringify(obj, { space: 2 }))
@@ -25,14 +35,28 @@ export function objectToFile(obj: Record<string, unknown>) {
   return file;
 }
 
-export async function createCARFile(entries: FsEntries): Promise<BlobPart[]> {
+export function anyToFile(obj: any): FileCandidate {
+  const encoder = new TextEncoder();
+  const file = {
+    content: encoder.encode(stringify(obj, { space: 2 }))
+  };
+  return file;
+}
+
+interface CarFileInfo {
+  parts: BlobPart[],
+  entries: ImportResult[],
+}
+
+export async function createCARFile(entries: FsEntries): Promise<CarFileInfo> {
   const blockstore = new MemoryBlockstore();
 
-  let rootEntry: ImportResult | undefined;
+  const importedEntries: ImportResult[] = [];
   for await (const entry of importer(entries, blockstore)) {
-    rootEntry = entry;
+    importedEntries.push(entry);
   }
 
+  const rootEntry = importedEntries[importedEntries.length];
   if (rootEntry !== undefined) {
     const c = rootEntry.cid;
     const rootCID = new CID(
@@ -54,7 +78,7 @@ export async function createCARFile(entries: FsEntries): Promise<BlobPart[]> {
       carParts.push(chunk)
     }
 
-    return carParts;
+    return { parts: carParts, entries: importedEntries };
     // return new Blob(carParts, {
     //   type: 'application/car',
     // });
