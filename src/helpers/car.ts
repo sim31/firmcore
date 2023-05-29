@@ -1,19 +1,26 @@
 import { CarWriter } from '@ipld/car/writer'
-import { importer, type FileCandidate, type DirectoryCandidate, ImportResult } from 'ipfs-unixfs-importer'
+import { importer, type FileCandidate, type DirectoryCandidate, ImportResult, ImporterOptions } from 'ipfs-unixfs-importer'
 import { MemoryBlockstore } from 'blockstore-core';
 import { CID } from 'multiformats';
 import stringify from 'json-stable-stringify-without-jsonify';
 import * as cidPkg from 'firmcontracts/interface/cid.js';
+import { ProgrammingError } from '../exceptions/ProgrammingError.js';
 
 const { cid0ToBytes32Str } = cidPkg;
 
 export type FsEntries = Array<FileCandidate | DirectoryCandidate>;
 
+const importOptions: ImporterOptions = {
+  rawLeaves: false,
+  reduceSingleLeafToSelf: false,
+  cidVersion: 0
+}
+
 export async function getFileCID(file: FileCandidate) {
   const blockstore = new MemoryBlockstore();
 
   let rootEntry: ImportResult | undefined;
-  for await (const entry of importer([file], blockstore)) {
+  for await (const entry of importer([file], blockstore, importOptions)) {
     rootEntry = entry;
   }
 
@@ -27,6 +34,15 @@ export async function getFileCIDBytes(file: FileCandidate) {
   }
   const cidBytes = cid0ToBytes32Str(cid.toV0().toString());
   return cidBytes;
+}
+
+export function getImportedCidBytes(results: ImportResult[], entryPath: string) {
+  const entry = results.find(res => res.path === entryPath);
+  if (entry === undefined) {
+    throw new ProgrammingError('Entry not found in the import results');
+  }
+
+  return cid0ToBytes32Str(entry.cid.toV0().toString());
 }
 
 export function objectToFile(obj: Record<string, unknown>): FileCandidate {
@@ -46,24 +62,33 @@ export function anyToFile(obj: any): FileCandidate {
 }
 
 interface CarFileInfo {
-  parts: BlobPart[],
+  parts: Uint8Array[],
   entries: ImportResult[],
+  rootCID: CID
 }
 
-export async function createCARFile(entries: FsEntries): Promise<CarFileInfo> {
+type CarOptions = {
+  wrapInDir?: boolean
+}
+
+export async function createCARFile(
+  entries: FsEntries,
+  options?: CarOptions
+): Promise<CarFileInfo> {
   const blockstore = new MemoryBlockstore();
 
   const importedEntries: ImportResult[] = [];
-  for await (const entry of importer(entries, blockstore)) {
+  const opts = options?.wrapInDir === undefined || options.wrapInDir ?
+    { ...importOptions, wrapWithDirectory: true }
+    : importOptions;
+
+  for await (const entry of importer(entries, blockstore, opts)) {
     importedEntries.push(entry);
   }
 
-  const rootEntry = importedEntries[importedEntries.length];
+  const rootEntry = importedEntries[importedEntries.length-1];
   if (rootEntry !== undefined) {
-    const c = rootEntry.cid;
-    const rootCID = new CID(
-      c.version, c.code, c.multihash, c.bytes
-    );
+    const rootCID = rootEntry.cid;
     console.log('root CID: ', rootCID.toString());
 
     const { writer, out } = CarWriter.create(rootCID);
@@ -80,7 +105,7 @@ export async function createCARFile(entries: FsEntries): Promise<CarFileInfo> {
       carParts.push(chunk)
     }
 
-    return { parts: carParts, entries: importedEntries };
+    return { parts: carParts, entries: importedEntries, rootCID };
     // return new Blob(carParts, {
     //   type: 'application/car',
     // });

@@ -9,7 +9,7 @@ import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import assert from "../helpers/assert.js";
 import { isDefined } from "../helpers/defined.js";
 import { defaultThreshold } from '../helpers/confirmerSet.js';
-import { FsEntries, anyToFile, createCARFile, getFileCID, getFileCIDBytes, objectToFile } from '../helpers/car.js';
+import { FsEntries, anyToFile, createCARFile, getFileCID, getFileCIDBytes, getImportedCidBytes, objectToFile } from '../helpers/car.js';
 import { InvalidArgument } from '../exceptions/InvalidArgument.js';
 import stringify from 'json-stable-stringify-without-jsonify';
 import { OpNotSupprtedError}  from '../exceptions/OpNotSupported.js';
@@ -341,7 +341,9 @@ export class FirmCoreFNode implements IFirmCore {
       })
     }
 
-    const { parts } = await createCARFile(fsEntries);
+    const { parts, entries } = await createCARFile(fsEntries);
+
+    console.log("Imported entries: ", entries);
 
     const importPromise = new Promise((resolve, reject) => {
       socket.emit('import', deployer.getFactoryAddress(), parts, (res) => {
@@ -367,8 +369,9 @@ export class FirmCoreFNode implements IFirmCore {
 
     const genesisBl = await createGenesisBlockVal([], ZeroId, confOps, args.threshold);
 
-    const abiCIDBytes = await getFileCIDBytes(abiFile);
+    const abiCIDBytes = getImportedCidBytes(entries, 'abi.json');
 
+    console.log('genesis block: ', genesisBl);
     const dtx = await factory.getDeployTransaction(
       genesisBl,
       confs,
