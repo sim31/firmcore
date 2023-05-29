@@ -1,6 +1,6 @@
-import { Address, IWallet, IWalletCreator, IWalletManager } from '../iwallet';
-import { Wallet } from './wallet';
-import { WalletCreator } from './walletCreator';
+import { Address, IWallet, IWalletCreator, IWalletManager } from '../iwallet/index.js';
+import { Wallet } from './wallet.js';
+import { WalletCreator } from './walletCreator.js';
 
 const _wallets: Wallet[] = [];
 const _byAddress: Record<Address, Wallet> = _wallets.reduce((prevValue, wallet) => {

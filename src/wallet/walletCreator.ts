@@ -1,5 +1,5 @@
-import type { IWalletCreator, IWallet } from "../iwallet";
-import { Wallet } from './wallet';
+import type { IWalletCreator, IWallet } from "../iwallet/index.js";
+import { Wallet } from './wallet.js';
 import { Wallet as EthWallet } from 'ethers';
 
 export class WalletCreator implements IWalletCreator {

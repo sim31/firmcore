@@ -1,4 +1,4 @@
-import { AccountWithAddress, Address, Confirmer, ConfirmerMap, ConfirmerOp, ConfirmerSet } from "../ifirmcore";
+import { AccountWithAddress, Address, Confirmer, ConfirmerMap, ConfirmerOp, ConfirmerSet } from "../ifirmcore/index.js";
 
 export function sumWeight(confs: { address: Address, weight?: number }[]): number {
   let sum = 0;

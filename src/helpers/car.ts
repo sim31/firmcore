@@ -3,7 +3,9 @@ import { importer, type FileCandidate, type DirectoryCandidate, ImportResult } f
 import { MemoryBlockstore } from 'blockstore-core';
 import { CID } from 'multiformats';
 import stringify from 'json-stable-stringify-without-jsonify';
-import { cid0ToBytes32Str } from 'firmcontracts/interface/cid';
+import * as cidPkg from 'firmcontracts/interface/cid.js';
+
+const { cid0ToBytes32Str } = cidPkg;
 
 export type FsEntries = Array<FileCandidate | DirectoryCandidate>;
 
@@ -67,7 +69,7 @@ export async function createCARFile(entries: FsEntries): Promise<CarFileInfo> {
     const { writer, out } = CarWriter.create(rootCID);
     for await (const block of blockstore.getAll()) {
       writer.put({ 
-        cid: new CID(block.cid.version, block.cid.code, block.cid.multihash, block.cid.bytes),
+        cid: block.cid,
         bytes: block.block
       });
     }

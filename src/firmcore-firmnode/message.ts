@@ -1,5 +1,5 @@
-import { AddressStr } from "firmcontracts/interface/types"
-import { CInput, CInputEncoded, CInputDecCodec, CInputEncCodec, CInputTxCodec } from "./contractInput"
+import { AddressStr } from "firmcontracts/interface/types.js"
+import { CInput, CInputEncoded, CInputDecCodec, CInputEncCodec, CInputTxCodec } from "./contractInput.js"
 import * as t from 'io-ts';
 
 export const TypedCodec = t.partial({

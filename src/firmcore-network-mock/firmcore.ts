@@ -1,22 +1,22 @@
 import { Required } from 'utility-types';
-import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr } from "firmcontracts/interface/types";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots } from "../ifirmcore";
+import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr } from "firmcontracts/interface/types.js";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots } from "../ifirmcore/index.js";
 import { BigNumber, BytesLike, ethers, utils } from "ethers";
-import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain";
-import { FirmContractDeployer } from 'firmcontracts/interface/deployer';
-import { getBlockBodyId, getBlockDigest, getBlockId, normalizeHexStr, randomAddressHex, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi";
-import { ZeroAddr, ConfirmerSet as FcConfirmerSet  } from 'firmcontracts/interface/types';
-import { timestampToDate } from '../helpers/date';
-import OpNotSupprtedError from '../exceptions/OpNotSupported';
-import ProgrammingError from '../exceptions/ProgrammingError';
-import { IWallet } from '../iwallet';
-import InvalidArgument from '../exceptions/InvalidArgument';
-import NotFound from '../exceptions/NotFound';
-import { Wallet } from "../wallet";
-import assert from '../helpers/assert';
-import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet';
-import { bytes32StrToCid0, cid0ToBytes32Str } from 'firmcontracts/interface/cid';
-import { isDefined } from '../helpers/defined';
+import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain.js";
+import { FirmContractDeployer } from 'firmcontracts/interface/deployer.js';
+import { getBlockBodyId, getBlockDigest, getBlockId, normalizeHexStr, randomAddressHex, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi.js";
+import { ZeroAddr, ConfirmerSet as FcConfirmerSet  } from 'firmcontracts/interface/types.js';
+import { timestampToDate } from '../helpers/date.js';
+import { OpNotSupprtedError } from '../exceptions/OpNotSupported.js';
+import { ProgrammingError } from '../exceptions/ProgrammingError.js';
+import { IWallet } from '../iwallet/index.js';
+import { InvalidArgument } from '../exceptions/InvalidArgument.js';
+import { NotFound } from '../exceptions/NotFound.js';
+import { Wallet } from "../wallet/index.js";
+import assert from '../helpers/assert.js';
+import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet.js';
+import { bytes32StrToCid0, cid0ToBytes32Str } from 'firmcontracts/interface/cid.js';
+import { isDefined } from '../helpers/defined.js';
 
 interface Chain {
   contract: EdenPlusFractal;
@@ -155,6 +155,7 @@ export class FirmCore implements IFirmCore {
       confs,
       args.threshold,
       args.name, args.symbol,
+      '0x0'  // FIXME
     );
     const bytecode = dtx.data;
     assert(bytecode !== undefined, 'bytecode should be defined');

@@ -1,5 +1,5 @@
-import { IPFSLink } from 'firmcontracts/interface/types'
-import { CInputEncMsg, CInputDecMsg, CInputTxMsg } from './message'
+import { IPFSLink } from 'firmcontracts/interface/types.js'
+import { CInputEncMsg, CInputDecMsg, CInputTxMsg } from './message.js'
 
 export interface ContractSeed {
   // TODO: better type

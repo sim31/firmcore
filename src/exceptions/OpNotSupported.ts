@@ -1,2 +1,2 @@
 
-export default class OpNotSupprtedError extends Error {};
+export class OpNotSupprtedError extends Error {};

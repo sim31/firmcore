@@ -1,8 +1,8 @@
-import { AddressStr } from "firmcontracts/interface/types";
-import { CID } from '@ipld/car/types/api';
-import { Message } from "./message";
+import { AddressStr } from "firmcontracts/interface/types.js";
+import { CID } from '@ipld/car/iterator';
+import { Message } from "./message.js";
 import { ethers } from "ethers";
-import { txApplied } from "../helpers/transactions";
+import { txApplied } from "../helpers/transactions.js";
 
 export interface ImportResult {
   roots: CID[];

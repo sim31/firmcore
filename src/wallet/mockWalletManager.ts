@@ -1,7 +1,7 @@
 import { Wallet as EthWallet, utils } from 'ethers';
-import { Address, IWallet, IWalletCreator, IWalletManager, PublicKey, Signature } from '../iwallet';
-import { Wallet } from './wallet';
-import { WalletCreator } from './walletCreator';
+import { Address, IWallet, IWalletCreator, IWalletManager, PublicKey, Signature } from '../iwallet/index.js';
+import { Wallet } from './wallet.js';
+import { WalletCreator } from './walletCreator.js';
 
 const _wallets: Wallet[] = [
   new Wallet(EthWallet.fromMnemonic(

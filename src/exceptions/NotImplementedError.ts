@@ -1,7 +1,7 @@
-import OpNotSupprtedError from "./OpNotSupported";
+import { OpNotSupprtedError } from "./OpNotSupported.js";
 
-export default class NotImplementedError extends OpNotSupprtedError {
+export class NotImplementedError extends OpNotSupprtedError {
   constructor(msg?: string) {
-    super('Not implemented' + ` ${msg}.` ?? '.')
+    super('Not implemented' + msg ? ` ${msg}` : '.');
   }
 }

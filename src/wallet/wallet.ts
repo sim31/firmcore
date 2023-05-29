@@ -1,7 +1,7 @@
 import { Wallet as EthWallet, utils } from 'ethers';
-import { Address, IWallet, IWalletCreator, IWalletManager, PublicKey, Signature } from '../iwallet';
-import { Signature as EthSig } from 'firmcontracts/interface/types';
-import { normalizeHexStr } from 'firmcontracts/interface/abi';
+import { Address, IWallet, IWalletCreator, IWalletManager, PublicKey, Signature } from '../iwallet/index.js';
+import { Signature as EthSig } from 'firmcontracts/interface/types.js';
+import { normalizeHexStr } from 'firmcontracts/interface/abi.js';
 
 
 export class Wallet implements IWallet {

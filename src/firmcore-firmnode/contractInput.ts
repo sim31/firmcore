@@ -1,4 +1,4 @@
-import { AddressStr } from 'firmcontracts/interface/types';
+import { AddressStr } from 'firmcontracts/interface/types.js';
 import { Overwrite } from 'utility-types';
 import * as t from 'io-ts';
 

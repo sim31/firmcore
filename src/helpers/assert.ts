@@ -1,4 +1,4 @@
-import ProgrammingError from "../exceptions/ProgrammingError";
+import { ProgrammingError } from "../exceptions/ProgrammingError.js";
 
 export default function assert(condition: any, msg: string = '') {
   if (!condition) {

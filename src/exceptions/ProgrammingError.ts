@@ -1,2 +1,2 @@
 
-export default class ProgrammingError extends Error {};
+export class ProgrammingError extends Error {};

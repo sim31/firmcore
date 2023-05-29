@@ -1,2 +1,2 @@
 
-export default class NotInitialized extends Error {};
+export class NotInitialized extends Error {};

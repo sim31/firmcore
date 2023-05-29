@@ -1,8 +1,8 @@
 import { Overwrite, Required } from 'utility-types';
-import { IWallet } from '../iwallet';
-import ByzantineChain from '../exceptions/ByzantineChain';
-import InvalidArgument from '../exceptions/InvalidArgument';
-import assert from '../helpers/assert';
+import { IWallet } from '../iwallet/index.js';
+import { ByzantineChain } from '../exceptions/ByzantineChain.js';
+import { InvalidArgument } from '../exceptions/InvalidArgument.js';
+import assert from '../helpers/assert.js';
 
 export type Address = string;
 export type BlockId = string;

@@ -1,2 +1,2 @@
 
-export default class ByzantineChain extends Error {};
+export class ByzantineChain extends Error {};

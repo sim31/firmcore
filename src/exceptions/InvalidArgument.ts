@@ -1,2 +1,2 @@
 
-export default class InvalidArgument extends Error {};
+export class InvalidArgument extends Error {};

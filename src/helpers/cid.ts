@@ -1,4 +1,4 @@
-import InvalidArgument from "../exceptions/InvalidArgument";
+import { InvalidArgument } from "../exceptions/InvalidArgument.js";
 
 export function isValidCid0(value: string): boolean {
   if (value.length === 46 && value.slice(0, 2) === 'Qm') {

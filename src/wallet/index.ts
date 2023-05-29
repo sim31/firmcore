@@ -1,5 +1,5 @@
 
-export * from './walletCreator';
-export * from './wallet';
-export * from './mockWalletManager';
-export * from './browserWallet';
+export * from './walletCreator.js';
+export * from './wallet.js';
+export * from './mockWalletManager.js';
+export * from './browserWallet.js';
