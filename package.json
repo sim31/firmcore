@@ -38,11 +38,13 @@
   "dependencies": {
     "@ipld/car": "^5.1.1",
     "blockstore-core": "^4.1.0",
+    "browser-readablestream-to-it": "^2.0.3",
     "date-fns": "^2.29.3",
     "ethers": "^5.7.2",
     "firmcontracts": "github:sim31/firmcontracts",
     "fp-ts": "^2.15.0",
     "io-ts": "^2.2.20",
+    "ipfs-unixfs-exporter": "^13.1.5",
     "ipfs-unixfs-importer": "^15.1.5",
     "json-stable-stringify-without-jsonify": "^1.0.1",
     "multiformats": "^11.0.2",

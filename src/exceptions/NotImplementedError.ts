@@ -2,6 +2,10 @@ import { OpNotSupprtedError } from "./OpNotSupported.js";
 
 export class NotImplementedError extends OpNotSupprtedError {
   constructor(msg?: string) {
-    super('Not implemented' + msg ? ` ${msg}` : '.');
+    if (msg) {
+      super(`Not implemented. ${msg}`)
+    } else {
+      super('Not implemented');
+    }
   }
 }

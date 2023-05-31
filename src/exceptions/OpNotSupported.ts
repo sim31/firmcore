@@ -1,2 +1,6 @@
 
-export class OpNotSupprtedError extends Error {};
+export class OpNotSupprtedError extends Error {
+  constructor(msg: string) {
+    super(msg);
+  }
+};

@@ -9,18 +9,32 @@ import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import assert from "../helpers/assert.js";
 import { isDefined } from "../helpers/defined.js";
 import { defaultThreshold } from '../helpers/confirmerSet.js';
-import { FsEntries, anyToFile, createCARFile, getFileCID, getFileCIDBytes, getImportedCidBytes, objectToFile } from '../helpers/car.js';
+import { FsEntries, anyToFile, createCARFile, getFileCID, getFileCIDBytes, getImportedCidBytes, logTree, objectToFile, readCARFile } from '../helpers/car.js';
 import { InvalidArgument } from '../exceptions/InvalidArgument.js';
 import stringify from 'json-stable-stringify-without-jsonify';
 import { OpNotSupprtedError}  from '../exceptions/OpNotSupported.js';
 import { NotImplementedError } from '../exceptions/NotImplementedError.js';
 import { Wallet } from '../wallet/index.js';
 import { IWallet, Signature } from '../iwallet/index.js';
-import { getBlockDigest, randomBytes32Hex } from 'firmcontracts/interface/abi.js';
+import { getBlockDigest, getBlockId, randomBytes32Hex } from 'firmcontracts/interface/abi.js';
 import { NotFound } from '../exceptions/NotFound.js';
-import { Socket, io } from 'socket.io-client';
-import { ClientToServerEvents, ServerToClientEvents, isError, resIsAppliedTx } from './socketTypes.js';
+import { io } from 'socket.io-client';
+import { ClientToServerEvents, CreatedContract, CreatedContractFull, FirmnodeSocket, ServerToClientEvents, isError, resIsAppliedTx } from './socketTypes.js';
 import { CInputEncMsg, newCInputEncMsg } from './message.js';
+import { isLeft } from 'fp-ts/lib/Either.js';
+import { FirmnodeBlockstore } from './blockstore.js';
+import { exporter } from 'ipfs-unixfs-exporter';
+import { CInputDecCodec, CInputEncCodec } from './contractInput.js';
+
+interface ChainIndex {
+  blockById: Record<BlockId, IPFSLink>
+}
+
+interface ChainCache {
+  belowCIDStr: IPFSLink,
+  constructorArgs: EFConstructorArgs,
+  index: ChainIndex,
+}
 
 export class FirmCoreFNode implements IFirmCore {
   readonly NullAddr = ZeroAddr;
@@ -35,13 +49,18 @@ export class FirmCoreFNode implements IFirmCore {
   private _abiLib: FirmChainAbi | undefined;
   private _implLib: FirmChainImpl | undefined;
   private _accSystemLib: AccountSystemImpl | undefined;
-  private _detFactoryAddr: string | undefined;
   private _deployer: FirmContractDeployer | undefined;
 
   private _provider: ethers.providers.JsonRpcProvider | undefined;
   private _signer: ethers.providers.JsonRpcSigner | undefined;
 
-  private _socket: Socket<ServerToClientEvents, ClientToServerEvents> | undefined;
+  private _ipfsEndpoint: string | undefined;
+
+  private _socket: FirmnodeSocket | undefined;
+
+  private _cache: Record<AddressStr, ChainCache> = {};
+
+  private _blockstore: FirmnodeBlockstore | undefined;
 
   constructor(verbose: boolean = false, quiet: boolean = true) {
     this._verbose = verbose;
@@ -71,6 +90,12 @@ export class FirmCoreFNode implements IFirmCore {
     this._implLib = await this._deployer.deployFirmChainImpl(this._abiLib);
 
     this._accSystemLib = await this._deployer.deployAccountSystemImpl();
+
+    this._ipfsEndpoint = 'http://localhost:8080'
+
+    this._blockstore = new FirmnodeBlockstore(this._socket);
+
+    await this._createCache('0xfb58bd38a11a4d94e902209110f4456c9eb0752c');
   }
 
   async shutDown(): Promise<void> {
@@ -80,7 +105,7 @@ export class FirmCoreFNode implements IFirmCore {
     return isDefined([
       this._provider, this._signer, this._deployer,
       this._abiLib, this._implLib, this._accSystemLib,
-      this._socket,
+      this._socket, this._blockstore
     ]);
   }
 
@@ -94,7 +119,75 @@ export class FirmCoreFNode implements IFirmCore {
       implLib: this._implLib!,
       accSystemLib: this._accSystemLib!,
       socket: this._socket!,
+      ipfsEndpoint: this._ipfsEndpoint!,
+      blockstore: this._blockstore!,
     }
+  }
+
+  private async _setChainCache(chainAddr: AddressStr, newCache: ChainCache) {
+    this._cache[chainAddr] = newCache;
+  }
+
+  // TODO: optimize by not waiting until next value is asked for
+  // private async * _fullChainDirIterator(cidStr: string) {
+        
+  // }
+
+  private async _retrieveFullTree(ipfsEndpoint: string, cidStr: string) {
+    const url = `${ipfsEndpoint}/ipfs/${cidStr}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/vnd.ipld.car'
+      }
+    });
+
+    if (response.ok && response.body !== null) {
+      return response.body;
+    } else {
+      throw new Error(`Could not retrieve: ${url}`);
+    }
+  }
+
+  private async _createCache(chainAddr: AddressStr): Promise<ChainCache> {
+    const { socket, ipfsEndpoint, blockstore } = this._getInitialized();
+
+    // TODO: implement firmnode client
+    const promise = new Promise<string>((resolve, reject) => {
+      socket.emit('getPathCID', chainAddr, '', async (res) => {
+        if (isLeft(res)) {
+          throw new NotFound(`Firmnode cannot retrieve the chain: ${res.left}`)
+        }
+        resolve(res.right);
+
+        // this._setChainCache(chainAddr, cache);
+      });
+    })
+    const cidStr = await promise;
+
+    const path = `${cidStr}/sc/deployment.json`
+    const entry = await exporter(path, blockstore);
+
+    if (entry.type !== 'file') {
+      throw new Error(`Unexpected type of entry in ${path}`)
+    }
+
+    // TODO: write custom codec to do this all at once
+    const decoder = new TextDecoder();
+    let str: string = '';
+    for await (const chunk of entry.content()) {
+      str += decoder.decode(chunk);
+    }
+    const obj = JSON.parse(str);
+
+    const decoded = CInputEncCodec.decode(obj);
+    if (isLeft(decoded)) {
+      throw new Error(`Unable to decode: ${path}`);
+    }
+
+    console.log('Decoded value: ', decoded.right);
+
+    throw new NotImplementedError();
   }
 
   async createEFChain(args: EFConstructorArgs): Promise<EFChain> {
@@ -112,11 +205,22 @@ export class FirmCoreFNode implements IFirmCore {
     const { provider, implLib, accSystemLib } = this._getInitialized();
 
     await provider.send('evm_mine', []);
-    const { contract, genesisBl } = await this._deployEFChain(implLib, accSystemLib, nargs);
+    const { contract, genesisBl, deploymentCID, belowCIDStr } =
+      await this._deployEFChain(implLib, accSystemLib, nargs);
     console.log('Contract created: ', contract.address);
-    // await this._deployEFChain(implLib, accSystemLib, nargs);
 
-    throw new NotImplementedError();
+    const newState: ChainCache = {
+      belowCIDStr,
+      constructorArgs: nargs,
+      index: {
+        blockById: {
+          [getBlockId(genesisBl.header)]: deploymentCID
+        }
+      }
+    };
+    this._setChainCache(contract.address, newState);
+
+    // await this._deployEFChain(implLib, accSystemLib, nargs);
 
     // const bId = getBlockId(genesisBl.header);
     // this._st.blocks[bId] = genesisBl;
@@ -132,7 +236,9 @@ export class FirmCoreFNode implements IFirmCore {
     //   genesisBlId: bId,
     // };
 
-    // const chain = await this.getChain(contract.address);
+    const chain = await this.getChain(contract.address);
+
+    throw new NotImplementedError();
     // if (!chain) {
     //   throw new ProgrammingError("getChain returned undefined");
     // } else {
@@ -144,8 +250,17 @@ export class FirmCoreFNode implements IFirmCore {
   }
 
   async getChain(address: Address): Promise<EFChain | undefined> {
+    this._getInitialized();
+
+    const cache = this._cache[address];
+    // await this._createCache(address);
+    // if (cache === undefined) {
+    //   // Need to build cache
+    //   // Check if chain exists in firmnode
+    //   await this._createCache(address);
+    // }
+
     throw new NotImplementedError();
-    // this._getInitialized();
     // const chain = this._st.chains[address];
     // if (!chain) {
     //   return undefined;
@@ -367,7 +482,7 @@ export class FirmCoreFNode implements IFirmCore {
       return createAddConfirmerOp(conf.addr, 1);
     });
 
-    const genesisBl = await createGenesisBlockVal([], ZeroId, confOps, args.threshold);
+    const genesisBl = await createGenesisBlockVal([], confOps, args.threshold);
 
     const abiCIDBytes = getImportedCidBytes(entries, 'abi.json');
 
@@ -382,24 +497,31 @@ export class FirmCoreFNode implements IFirmCore {
     assert(dtx.data !== undefined, 'Deploy tx cannot be empty');
     const inputMsg = newCInputEncMsg(deployer.getFactoryAddress(), dtx.data!.toString());
 
-    const sendPromise = new Promise<AddressStr>((resolve, reject) => {
+    const sendPromise = new Promise<{ contract: CreatedContractFull, deploymentCID: IPFSLink }>((resolve, reject) => {
       socket.emit('send', inputMsg, (result) => {
         if (result.error !== undefined) {
           reject(`Error response sending ${inputMsg}\n Error: ${result.error}`);
         } else if (resIsAppliedTx(result)) {
-          if (result.contractsCreated?.at(0) !== undefined) {
-            resolve(result.contractsCreated[0]!);
+          const contract = result.contractsCreated?.at(0);
+          if (result.cidStr !== undefined && contract !== undefined && contract.belowCIDStr !== null) {
+            const c = { ...contract, belowCIDStr: contract.belowCIDStr };
+            resolve({ contract: c, deploymentCID: result.cidStr });
           } else {
-            reject(`Did not receive deployed address. ${inputMsg}`);
+            reject(`Did not receive deployed address or deployment CID. ${inputMsg}`);
           }
         } else {
           reject(`Failed to apply tx ${inputMsg}`);
         }
       });
     });
-    const addr = await sendPromise;
+    const { contract, deploymentCID } = await sendPromise;
     
-    return { contract: factory.attach(addr), genesisBl };
+    return {
+      contract: factory.attach(contract.address),
+      genesisBl,
+      deploymentCID,
+      belowCIDStr: contract.belowCIDStr,
+    };
   }
 
   // TODO:

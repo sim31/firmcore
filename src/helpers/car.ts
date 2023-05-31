@@ -1,10 +1,15 @@
 import { CarWriter } from '@ipld/car/writer'
 import { importer, type FileCandidate, type DirectoryCandidate, ImportResult, ImporterOptions } from 'ipfs-unixfs-importer'
+import { exporter, UnixFSEntry, UnixFSFile } from 'ipfs-unixfs-exporter';
 import { MemoryBlockstore } from 'blockstore-core';
 import { CID } from 'multiformats';
 import stringify from 'json-stable-stringify-without-jsonify';
 import * as cidPkg from 'firmcontracts/interface/cid.js';
 import { ProgrammingError } from '../exceptions/ProgrammingError.js';
+import { CarReader } from '@ipld/car';
+import toIt from 'browser-readablestream-to-it'
+import { InvalidArgument } from '../exceptions/InvalidArgument.js';
+import { Overwrite } from 'utility-types';
 
 const { cid0ToBytes32Str } = cidPkg;
 
@@ -111,5 +116,49 @@ export async function createCARFile(
     // });
   } else {
     throw new Error('Unable to determine import into unixfs');
+  }
+}
+
+export async function readCARFile(carFile: ReadableStream<Uint8Array>): Promise<UnixFSEntry> {
+  const it = toIt(carFile);
+
+  const reader = await CarReader.fromIterable(it);
+
+  const roots = await reader.getRoots();
+  if (roots.length !== 1) {
+    throw new ProgrammingError('This CAR file should have one root');
+  }
+  const root = roots[0]!;
+
+  const blockstore = new MemoryBlockstore();
+
+  for await (const block of reader.blocks()) {
+    // TODO: they should fix the typings
+    blockstore.put(block.cid, block.bytes);
+  }
+
+  return await exporter(root, blockstore);
+}
+
+export async function unixfsFileToJson(entry: UnixFSFile) {
+  const decoder = new TextDecoder();
+  let str = '';
+  for await (const chunk of entry.content()) {
+    str += decoder.decode(chunk, { stream: true });
+  }
+  return JSON.parse(str);
+}
+
+export async function logTree(rootEntry: UnixFSEntry) {
+  console.log('tree: ', rootEntry.name);
+  if (rootEntry.type === 'file') {
+    // TODO: how to convert these chunks to text...
+    for await (const chunk of rootEntry.content()) {
+      // console.log(chunk)
+    }
+  } else if (rootEntry.type === 'directory') {
+    for await (const entry of rootEntry.content()) {
+      await logTree(entry);
+    }
   }
 }
