@@ -54,7 +54,7 @@ export type GetIPBlockStatResult = Either<GetIPBlockStatErr, any>;
 export type GetIPBlockStatCb = (res: GetIPBlockStatResult) => void;
 
 export type GetIPBlockErr = string;
-export type GetIPBlockResult = Either<GetIPBlockErr, Uint8Array>;
+export type GetIPBlockResult = Either<GetIPBlockErr, ArrayBuffer>;
 export type GetIPBlockCb = (res: GetIPBlockResult) => void;
 
 export function resIsAppliedTx(res: SendResult): boolean {

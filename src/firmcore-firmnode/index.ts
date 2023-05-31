@@ -25,6 +25,7 @@ import { isLeft } from 'fp-ts/lib/Either.js';
 import { FirmnodeBlockstore } from './blockstore.js';
 import { exporter } from 'ipfs-unixfs-exporter';
 import { CInputDecCodec, CInputEncCodec } from './contractInput.js';
+import { FirmnodeClient } from './firmnode-client.js';
 
 interface ChainIndex {
   blockById: Record<BlockId, IPFSLink>
@@ -60,7 +61,7 @@ export class FirmCoreFNode implements IFirmCore {
 
   private _cache: Record<AddressStr, ChainCache> = {};
 
-  private _blockstore: FirmnodeBlockstore | undefined;
+  private _fnClient: FirmnodeClient | undefined;
 
   constructor(verbose: boolean = false, quiet: boolean = true) {
     this._verbose = verbose;
@@ -93,7 +94,7 @@ export class FirmCoreFNode implements IFirmCore {
 
     this._ipfsEndpoint = 'http://localhost:8080'
 
-    this._blockstore = new FirmnodeBlockstore(this._socket);
+    this._fnClient = new FirmnodeClient(this._socket);
 
     await this._createCache('0xfb58bd38a11a4d94e902209110f4456c9eb0752c');
   }
@@ -105,7 +106,7 @@ export class FirmCoreFNode implements IFirmCore {
     return isDefined([
       this._provider, this._signer, this._deployer,
       this._abiLib, this._implLib, this._accSystemLib,
-      this._socket, this._blockstore
+      this._socket, this._fnClient
     ]);
   }
 
@@ -120,7 +121,7 @@ export class FirmCoreFNode implements IFirmCore {
       accSystemLib: this._accSystemLib!,
       socket: this._socket!,
       ipfsEndpoint: this._ipfsEndpoint!,
-      blockstore: this._blockstore!,
+      fnClient: this._fnClient!,
     }
   }
 
@@ -150,42 +151,13 @@ export class FirmCoreFNode implements IFirmCore {
   }
 
   private async _createCache(chainAddr: AddressStr): Promise<ChainCache> {
-    const { socket, ipfsEndpoint, blockstore } = this._getInitialized();
+    const { fnClient } = this._getInitialized();
 
-    // TODO: implement firmnode client
-    const promise = new Promise<string>((resolve, reject) => {
-      socket.emit('getPathCID', chainAddr, '', async (res) => {
-        if (isLeft(res)) {
-          throw new NotFound(`Firmnode cannot retrieve the chain: ${res.left}`)
-        }
-        resolve(res.right);
+    const deployment = await fnClient.readContractInputEnc(
+      chainAddr, 'sc/deployment.json'
+    );
 
-        // this._setChainCache(chainAddr, cache);
-      });
-    })
-    const cidStr = await promise;
-
-    const path = `${cidStr}/sc/deployment.json`
-    const entry = await exporter(path, blockstore);
-
-    if (entry.type !== 'file') {
-      throw new Error(`Unexpected type of entry in ${path}`)
-    }
-
-    // TODO: write custom codec to do this all at once
-    const decoder = new TextDecoder();
-    let str: string = '';
-    for await (const chunk of entry.content()) {
-      str += decoder.decode(chunk);
-    }
-    const obj = JSON.parse(str);
-
-    const decoded = CInputEncCodec.decode(obj);
-    if (isLeft(decoded)) {
-      throw new Error(`Unable to decode: ${path}`);
-    }
-
-    console.log('Decoded value: ', decoded.right);
+    console.log('deployment: ', deployment);
 
     throw new NotImplementedError();
   }
