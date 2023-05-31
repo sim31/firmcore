@@ -1,12 +1,14 @@
 import { AddressStr } from "firmcontracts/interface/types.js";
 import { FirmnodeBlockstore } from "./blockstore.js";
 import { CInputEncMsg, CInputEncMsgCodec, CInputMsgCodec, ContractMsg, Message, MessageCodec } from "./message.js";
-import { FirmnodeSocket } from "./socketTypes.js";
+import { FirmnodeSocket, SendInputApplied, SendResult, SendSuccess, isError, resIsAppliedTx } from "./socketTypes.js";
 import { isLeft } from "fp-ts/lib/Either.js";
 import { NotFound } from "../exceptions/NotFound.js";
 import { UnixFSEntry, UnixFSFile, exporter } from "ipfs-unixfs-exporter";
 import { Type } from "io-ts";
 import { TypeOf } from "io-ts";
+import { FsEntries, createCARFile } from "../helpers/car.js";
+import { ImportResult } from "ipfs-unixfs-importer";
 
 export class FirmnodeClient {
   private _socket: FirmnodeSocket;
@@ -31,7 +33,7 @@ export class FirmnodeClient {
     return promise;
   }
 
-  async readContractEntry(contractAddr: AddressStr, path: string): Promise<UnixFSEntry> {
+  async readEntry(contractAddr: AddressStr, path: string): Promise<UnixFSEntry> {
     const cidStr = await this.getContractCID(contractAddr);
 
     const realPath = `${cidStr}/${path}`;
@@ -39,8 +41,8 @@ export class FirmnodeClient {
     return await exporter(realPath, this._blockstore);
   }
 
-  async readContractUnixfsFile(contractAddr: AddressStr, path: string): Promise<UnixFSFile> {
-    const entry = await this.readContractEntry(contractAddr, path);
+  async readUnixfsFile(contractAddr: AddressStr, path: string): Promise<UnixFSFile> {
+    const entry = await this.readEntry(contractAddr, path);
 
     if (entry.type !== 'file') {
       throw new Error(`Expected a file at ${path}`)
@@ -49,8 +51,8 @@ export class FirmnodeClient {
     return entry;
   }
 
-  async readContractFileStr(contractAddr: AddressStr, path: string): Promise<string> {
-    const file = await this.readContractUnixfsFile(contractAddr, path);
+  async readFileStr(contractAddr: AddressStr, path: string): Promise<string> {
+    const file = await this.readUnixfsFile(contractAddr, path);
 
     // TODO: write custom codec to do this all at once
     const decoder = new TextDecoder();
@@ -62,16 +64,16 @@ export class FirmnodeClient {
     return str;
   }
 
-  async readContractObject(contractAddr: AddressStr, path: string): Promise<unknown> {
-    const str = await this.readContractFileStr(contractAddr, path);
+  async readObject(contractAddr: AddressStr, path: string): Promise<unknown> {
+    const str = await this.readFileStr(contractAddr, path);
 
     return JSON.parse(str);
   }
 
-  async readContractTyped<A>(
+  async readTyped<A>(
     contractAddr: AddressStr, path: string, codec: Type<A>
   ): Promise<A> {
-    const obj = await this.readContractObject(contractAddr, path);
+    const obj = await this.readObject(contractAddr, path);
 
     const dec = codec.decode(obj);
 
@@ -84,16 +86,58 @@ export class FirmnodeClient {
   }
 
   async readContractMsg(contractAddr: AddressStr, path: string): Promise<Message> { 
-    return this.readContractTyped(
+    return this.readTyped(
       contractAddr, path, MessageCodec
     );
   }
 
   async readContractInput(contractAddr: AddressStr, path: string): Promise<ContractMsg> {
-    return this.readContractTyped(contractAddr, path, CInputMsgCodec);
+    return this.readTyped(contractAddr, path, CInputMsgCodec);
   }
 
   async readContractInputEnc(contractAddr: AddressStr, path: string): Promise<CInputEncMsg> {
-    return this.readContractTyped(contractAddr, path, CInputEncMsgCodec);
+    return this.readTyped(contractAddr, path, CInputEncMsgCodec);
+  }
+
+  async importEntries(contractAddr: AddressStr, fsEntries: FsEntries): Promise<ImportResult[]> {
+    const { parts, entries } = await createCARFile(fsEntries);
+
+    const importPromise = new Promise((resolve, reject) => {
+      this._socket.emit('import', contractAddr, parts, (res) => {
+        if (isError(res)) {
+          console.error('Failed importing: ', res);
+          reject(res);
+        } else {
+          console.log('import result: ', res.roots);
+          resolve(res);
+        }
+      });
+    });
+    await importPromise;
+
+    return entries;
+  }
+
+  async send(msg: Message): Promise<SendSuccess> {
+    const sendPromise = new Promise<SendSuccess>((resolve, reject) => {
+      this._socket.emit('send', msg, (result) => {
+        if (result.error !== undefined) {
+          reject(`Error response sending ${msg}\n Error: ${result.error}`);
+        } else {
+          resolve(result);
+        }
+      });
+    });
+    return sendPromise;
+  }
+
+  async sendContractInput(msg: ContractMsg): Promise<SendInputApplied> {
+    const res = await this.send(msg);
+    if (resIsAppliedTx(res)) {
+      return res;
+    } else {
+      throw new Error(`Failed to apply: ${msg}`);
+    }
+
   }
 }

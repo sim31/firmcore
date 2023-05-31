@@ -6,6 +6,7 @@ import { txApplied } from "../helpers/transactions.js";
 import { Overwrite } from "utility-types";
 import { Either } from "fp-ts/lib/Either.js";
 import { Socket } from 'socket.io-client';
+import { Required } from "utility-types";
 
 export interface ImportResult {
   roots: CID[];
@@ -31,6 +32,7 @@ export interface CreatedContract {
 
 export type CreatedContractFull = Overwrite<CreatedContract, { belowCIDStr: string }>;
 
+// TODO: Refactor to use Either?
 export type SendError = string;
 export type SendResult = {
   cidStr?: string,
@@ -39,6 +41,9 @@ export type SendResult = {
   contractsCreated?: CreatedContract[],
   belowCIDStr?: string,
 }
+export type SendSuccess = Omit<SendResult, 'error'>;
+export type SendInputApplied = Required<SendSuccess, 'txReceipt'>;
+
 export type SendCallback = (res: SendResult) => void;
 
 export type GetPathCIDError = string;
@@ -57,7 +62,7 @@ export type GetIPBlockErr = string;
 export type GetIPBlockResult = Either<GetIPBlockErr, ArrayBuffer>;
 export type GetIPBlockCb = (res: GetIPBlockResult) => void;
 
-export function resIsAppliedTx(res: SendResult): boolean {
+export function resIsAppliedTx(res: SendResult): res is SendInputApplied {
   return res.txReceipt ? txApplied(res.txReceipt) : false;
 }
 

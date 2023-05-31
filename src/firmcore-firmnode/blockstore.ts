@@ -42,7 +42,7 @@ export class FirmnodeBlockstore extends BaseBlockstore {
           console.log(errStr);
           reject(new Error(errStr));
         } else {
-          console.log('retrieving: ', key, 'value: ', res.right);
+          // console.log('retrieving: ', key, 'value: ', res.right);
           resolve(new Uint8Array(res.right));
         }
       })

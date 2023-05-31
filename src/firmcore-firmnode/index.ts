@@ -96,7 +96,7 @@ export class FirmCoreFNode implements IFirmCore {
 
     this._fnClient = new FirmnodeClient(this._socket);
 
-    await this._createCache('0xfb58bd38a11a4d94e902209110f4456c9eb0752c');
+    // await this._createCache('0xfb58bd38a11a4d94e902209110f4456c9eb0752c');
   }
 
   async shutDown(): Promise<void> {
@@ -399,7 +399,7 @@ export class FirmCoreFNode implements IFirmCore {
     accSystemImpl: AccountSystemImpl,
     args: Required<EFConstructorArgs, 'threshold'>,
   ) {
-    const { deployer, socket } = this._getInitialized();
+    const { deployer, socket, fnClient } = this._getInitialized();
 
     // Upload account metadata and abi files (our next transaction will reference these things)
 
@@ -428,22 +428,10 @@ export class FirmCoreFNode implements IFirmCore {
       })
     }
 
-    const { parts, entries } = await createCARFile(fsEntries);
+
+    const entries = await fnClient.importEntries(deployer.getFactoryAddress(), fsEntries);
 
     console.log("Imported entries: ", entries);
-
-    const importPromise = new Promise((resolve, reject) => {
-      socket.emit('import', deployer.getFactoryAddress(), parts, (res) => {
-        if (isError(res)) {
-          console.error('Failed importing: ', res);
-          reject(res);
-        } else {
-          console.log('import result: ', res.roots);
-          resolve(res);
-        }
-      });
-    });
-    await importPromise;
 
     const factory = new EdenPlusFractal__factory({
       ["contracts/FirmChainImpl.sol:FirmChainImpl"]: fchainImpl.address,
@@ -469,31 +457,18 @@ export class FirmCoreFNode implements IFirmCore {
     assert(dtx.data !== undefined, 'Deploy tx cannot be empty');
     const inputMsg = newCInputEncMsg(deployer.getFactoryAddress(), dtx.data!.toString());
 
-    const sendPromise = new Promise<{ contract: CreatedContractFull, deploymentCID: IPFSLink }>((resolve, reject) => {
-      socket.emit('send', inputMsg, (result) => {
-        if (result.error !== undefined) {
-          reject(`Error response sending ${inputMsg}\n Error: ${result.error}`);
-        } else if (resIsAppliedTx(result)) {
-          const contract = result.contractsCreated?.at(0);
-          if (result.cidStr !== undefined && contract !== undefined && contract.belowCIDStr !== null) {
-            const c = { ...contract, belowCIDStr: contract.belowCIDStr };
-            resolve({ contract: c, deploymentCID: result.cidStr });
-          } else {
-            reject(`Did not receive deployed address or deployment CID. ${inputMsg}`);
-          }
-        } else {
-          reject(`Failed to apply tx ${inputMsg}`);
-        }
-      });
-    });
-    const { contract, deploymentCID } = await sendPromise;
-    
-    return {
-      contract: factory.attach(contract.address),
-      genesisBl,
-      deploymentCID,
-      belowCIDStr: contract.belowCIDStr,
-    };
+    const result = await fnClient.sendContractInput(inputMsg);
+    const c = result.contractsCreated?.at(0);
+    if (result.cidStr !== undefined && c !== undefined && c.belowCIDStr !== null) {
+      return {
+        contract: factory.attach(c.address),
+        genesisBl,
+        deploymentCID: result.cidStr,
+        belowCIDStr: c.belowCIDStr,
+      }
+    } else {
+      throw new Error(`Did not receive deployed address or deployment CID. ${inputMsg}`);
+    }
   }
 
   // TODO:
