@@ -67,6 +67,23 @@ export function objectToFile(obj: Record<string, unknown>): FileCandidate {
   return file;
 }
 
+export async function objectToCAR(
+  obj: Record<string, unknown>,
+  options: CarOptions = { wrapInDir: false }
+): Promise<CarFileInfo> {
+  const file = objectToFile(obj);
+  return await createCARFile([file], options);
+}
+
+export async function anyToCAR(
+  a: any,
+  options: CarOptions = { wrapInDir: false }
+): Promise<CarFileInfo> {
+  const file = anyToFile(a);
+  return await createCARFile([file], options);
+}
+
+
 export function anyToFile(obj: any): FileCandidate {
   const encoder = new TextEncoder();
   const file = {
