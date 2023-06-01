@@ -75,7 +75,7 @@ export function anyToFile(obj: any): FileCandidate {
   return file;
 }
 
-interface CarFileInfo {
+export interface CarFileInfo {
   parts: Uint8Array[],
   entries: ImportResult[],
   rootCID: CID
@@ -149,7 +149,7 @@ export async function readCARFile(carFile: ReadableStream<Uint8Array>): Promise<
   return await exporter(root, blockstore);
 }
 
-export async function unixfsFileToJson(entry: UnixFSFile) {
+export async function unixfsFileToObj(entry: UnixFSFile) {
   const decoder = new TextDecoder();
   let str = '';
   for await (const chunk of entry.content()) {

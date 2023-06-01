@@ -2,6 +2,7 @@ import { Overwrite, Required } from 'utility-types';
 import { IWallet } from '../iwallet/index.js';
 import { ByzantineChain } from '../exceptions/ByzantineChain.js';
 import { InvalidArgument } from '../exceptions/InvalidArgument.js';
+import { CarFileInfo } from '../helpers/car.js'
 import assert from '../helpers/assert.js';
 
 export type Address = string;
@@ -535,12 +536,13 @@ export interface IFirmCore {
   readonly NullAccountId: AccountId;
   readonly NullIPFSLink: IPFSLink;
 
-  init(): Promise<void>;
+  init(car?: Blob): Promise<void>;
   shutDown(): Promise<void>;
   createEFChain(args: EFConstructorArgs): Promise<EFChain>;
   getChain(address: Address): Promise<EFChain | undefined>;
   createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer>;
 
+  exportAsCAR(): Promise<CarFileInfo>
   // Helpers for testing
   randomAddress(): Address;
   randomBlockId(): BlockId;

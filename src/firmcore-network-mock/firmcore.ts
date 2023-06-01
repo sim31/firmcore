@@ -1,5 +1,5 @@
-import { Required } from 'utility-types';
-import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr } from "firmcontracts/interface/types.js";
+import { Overwrite, Required } from 'utility-types';
+import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr, SignatureValue, toValue } from "firmcontracts/interface/types.js";
 import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots } from "../ifirmcore/index.js";
 import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain.js";
@@ -18,12 +18,23 @@ import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet.j
 import { bytes32StrToCid0, cid0ToBytes32Str } from 'firmcontracts/interface/cid.js';
 import { isDefined } from '../helpers/defined.js';
 import ganache from 'ganache';
+import { CarFileInfo, createCARFile, objectToFile, readCARFile, unixfsFileToObj } from '../helpers/car.js';
+import stringify from 'json-stable-stringify-without-jsonify';
+import { FileCandidate } from 'ipfs-unixfs-importer';
 
 interface Chain {
   contract: EdenPlusFractal;
   constructorArgs: EFConstructorArgs;
   genesisBlId: BlockIdStr;
   headBlockId: BlockIdStr;
+}
+type SerializableChain = Overwrite<Chain, {
+  contract: Address
+}>;
+
+type Confirmation = {
+  address: Address
+  sig: SignatureValue
 }
 
 // TODO: remove for serialization:
@@ -35,9 +46,13 @@ interface FirmCoreState {
   orderedBlocks: Record<Address, BlockId[][]>;
   msgs: Record<BlockId, EFMsg[]>;
   fullAccounts: Record<IPFSLink, Account>;
-  confirmations: Record<BlockId, Address[]>;
+  confirmations: Record<BlockId, Confirmation[]>;
   states: Record<BlockId, EFChainState>;
 }
+
+type SerializableFcState = Overwrite<FirmCoreState, {
+  chains: SerializableChain[]
+}>;
 
 const initFirmCoreState: FirmCoreState = {
   chains: {},
@@ -77,8 +92,64 @@ export class FirmCore implements IFirmCore {
     this._quiet = quiet;
   }
 
-  async init(): Promise<void> {
-    console.log('This is new version');
+  private _toSerializableFcState(): SerializableFcState {
+    return { 
+      ...this._st,
+      chains: Object.values(this._st.chains).map((v) => {
+        return {
+          ...v,
+          contract: v.contract.address
+        }
+      })
+    };
+  }
+
+  private serializeFcState(): FileCandidate {
+    const serializable = this._toSerializableFcState();
+    return objectToFile(serializable);
+  }
+
+  async exportAsCAR(): Promise<CarFileInfo> {
+    const file = this.serializeFcState();
+    const car = await createCARFile([file], { wrapInDir: false });
+    return car;
+  }
+
+  private async initFromCar(car: Blob) {
+    const fsEntry = await readCARFile(car.stream());            
+    if (fsEntry.type !== 'file') {
+      throw new Error('Single file expected');
+    }
+    const fcState = await unixfsFileToObj(fsEntry) as SerializableFcState;
+
+    for (const chain of fcState.chains) {
+      const constructorArgs = chain.constructorArgs;
+      const efChain = await this.createEFChain(constructorArgs);
+      if (efChain.address !== chain.contract) {
+        throw new InvalidArgument('Invalid car: chain.contract')
+      }
+      if (efChain.genesisBlockId !== chain.genesisBlId) {
+        throw new InvalidArgument('Invalid car: chain.genesisBlId')
+      }
+      if (await efChain.headBlockId() !== chain.headBlockId) {
+        throw new InvalidArgument('Invalid car: chain.headBlockId')
+      }
+    }
+  }
+
+  // async mountCAR(carFile: Blob): Promise<void> {
+  //   const fsEntry = await readCARFile(carFile.stream());            
+  //   if (fsEntry.type !== 'file') {
+  //     throw new Error('Single file expected');
+  //   }
+  //   const obj = await unixfsFileToObj(fsEntry);
+  //   // TODO:
+  //   // * relaunch ganache node
+
+  //   this._st = obj;
+  // }
+
+  async init(car?: Blob): Promise<void> {
     // console.log("_init 1", !_ganacheProv, !_provider, !_signer);
     // assert(!_underlyingProvider && !_provider && !_signer, "Already initialized");
     assert(!this._provider && !this._signer, "Already initialized");
@@ -107,6 +178,10 @@ export class FirmCore implements IFirmCore {
 
     const fsContract = await this._deployer.deployFilesystem();
     console.log('fsContract: ', fsContract.address);
+
+    // if (car !== undefined) {
+    //   await initFromCar(car);
+    // }
   }
 
   async shutDown(): Promise<void> {
@@ -334,10 +409,17 @@ export class FirmCore implements IFirmCore {
           throw new ProgrammingError("Confirmations empty");
         }
 
-        this._st.confirmations[blockId] = [...bConfs, wallet.getAddress()];
+        this._st.confirmations[blockId] = [
+          ...bConfs,
+          {
+            address: wallet.getAddress(),
+            sig: await toValue(signature)
+          }
+        ];
         bConfs = this._st.confirmations[blockId]!;
+        const confirmAddrs = bConfs.map(v => v.address);
         const confirmStatus = prevBlock ? 
-          this._confirmStatusFromBlock(prevBlock, bConfs)
+          this._confirmStatusFromBlock(prevBlock, confirmAddrs)
           : this._confirmStatusForGenesis();
         if (confirmStatus.final) {
           // console.log("headBlock: ", await chain.contract.getHead());
@@ -360,7 +442,7 @@ export class FirmCore implements IFirmCore {
           this._st.states[blockId] = {
             delegates: emptyDelegates,
             directoryId: ZeroId,
-            confirmations: bConfs,
+            confirmations: confirmAddrs,
             confirmationStatus: confirmStatus,
             confirmerSet: this._confirmerSetFromBlock(block),
             allAccounts: false,
@@ -440,7 +522,7 @@ export class FirmCore implements IFirmCore {
             return new Promise((resolve) => {
               const confs = this._st.confirmations[id];
               if (confs) {
-                resolve(confs);
+                resolve(confs.map(v => v.address));
               } else {
                 resolve([]);
               }
@@ -465,7 +547,7 @@ export class FirmCore implements IFirmCore {
                   if (!prevBlock) {
                     reject(new ProgrammingError("Previous block not recorded"));
                   } else {
-                    resolve(this._confirmStatusFromBlock(prevBlock, confs));
+                    resolve(this._confirmStatusFromBlock(prevBlock, confs.map(v => v.address)));
                   }
                 }
               }
