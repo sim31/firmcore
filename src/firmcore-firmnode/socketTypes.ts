@@ -1,6 +1,6 @@
 import { AddressStr } from "firmcontracts/interface/types.js";
 import { CID } from '@ipld/car/iterator';
-import { Message } from "./message.js";
+import { Message } from "../firmnode-base/message.js";
 import { ethers } from "ethers";
 import { txApplied } from "../helpers/transactions.js";
 import { Overwrite } from "utility-types";
@@ -25,12 +25,6 @@ export function isError(res: SocketError | ImportResult): res is SocketError {
   return typeof res === 'string';
 }
 
-export interface CreatedContract {
-  address: AddressStr,
-  belowCIDStr: string | null,
-}
-
-export type CreatedContractFull = Overwrite<CreatedContract, { belowCIDStr: string }>;
 
 // TODO: Refactor to use Either?
 export type SendError = string;
@@ -61,10 +55,6 @@ export type GetIPBlockStatCb = (res: GetIPBlockStatResult) => void;
 export type GetIPBlockErr = string;
 export type GetIPBlockResult = Either<GetIPBlockErr, ArrayBuffer>;
 export type GetIPBlockCb = (res: GetIPBlockResult) => void;
-
-export function resIsAppliedTx(res: SendResult): res is SendInputApplied {
-  return res.txReceipt ? txApplied(res.txReceipt) : false;
-}
 
 export interface ClientToServerEvents {
   import: (

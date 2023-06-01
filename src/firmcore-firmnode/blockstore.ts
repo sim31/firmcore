@@ -1,5 +1,5 @@
 import { BaseBlockstore } from "blockstore-core";
-import { AbortOptions, Await } from "interface-store";
+import { Await } from "interface-store";
 import { CID } from "multiformats";
 import { FirmnodeSocket } from "./socketTypes.js";
 import { isLeft } from "fp-ts/lib/Either.js";

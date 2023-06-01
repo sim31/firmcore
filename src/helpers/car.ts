@@ -41,7 +41,16 @@ export async function getFileCIDBytes(file: FileCandidate) {
   return cidBytes;
 }
 
-export function getImportedCidBytes(results: ImportResult[], entryPath: string) {
+export function getImportedCID(results: ImportResult[], entryPath: string) {
+  const entry = results.find(res => res.path === entryPath);
+  if (entry === undefined) {
+    throw new ProgrammingError('Entry not found in the import results');
+  }
+
+  return entry.cid.toV0();
+}
+
+export function getImportedCIDBytes(results: ImportResult[], entryPath: string) {
   const entry = results.find(res => res.path === entryPath);
   if (entry === undefined) {
     throw new ProgrammingError('Entry not found in the import results');

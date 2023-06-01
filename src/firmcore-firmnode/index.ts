@@ -9,7 +9,7 @@ import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import assert from "../helpers/assert.js";
 import { isDefined } from "../helpers/defined.js";
 import { defaultThreshold } from '../helpers/confirmerSet.js';
-import { FsEntries, anyToFile, createCARFile, getFileCID, getFileCIDBytes, getImportedCidBytes, logTree, objectToFile, readCARFile } from '../helpers/car.js';
+import { FsEntries, anyToFile, createCARFile, getFileCID, getFileCIDBytes, getImportedCID, logTree, objectToFile, readCARFile } from '../helpers/car.js';
 import { InvalidArgument } from '../exceptions/InvalidArgument.js';
 import stringify from 'json-stable-stringify-without-jsonify';
 import { OpNotSupprtedError}  from '../exceptions/OpNotSupported.js';
@@ -20,12 +20,12 @@ import { getBlockDigest, getBlockId, randomBytes32Hex } from 'firmcontracts/inte
 import { NotFound } from '../exceptions/NotFound.js';
 import { io } from 'socket.io-client';
 import { ClientToServerEvents, CreatedContract, CreatedContractFull, FirmnodeSocket, ServerToClientEvents, isError, resIsAppliedTx } from './socketTypes.js';
-import { CInputEncMsg, newCInputEncMsg } from './message.js';
+import { CInputEncMsg, newCInputEncMsg, newFactoryInputDecMsg } from '../firmnode-base/message.js';
 import { isLeft } from 'fp-ts/lib/Either.js';
 import { FirmnodeBlockstore } from './blockstore.js';
 import { exporter } from 'ipfs-unixfs-exporter';
-import { CInputDecCodec, CInputEncCodec } from './contractInput.js';
-import { FirmnodeClient } from './firmnode-client.js';
+import { CInputDecCodec, CInputEncCodec, FunctionArg } from '../firmnode-base/contractInput.js';
+import { FirmnodeClient } from './firmnodeClient.js';
 
 interface ChainIndex {
   blockById: Record<BlockId, IPFSLink>
@@ -443,19 +443,24 @@ export class FirmCoreFNode implements IFirmCore {
     });
 
     const genesisBl = await createGenesisBlockVal([], confOps, args.threshold);
-
-    const abiCIDBytes = getImportedCidBytes(entries, 'abi.json');
-
     console.log('genesis block: ', genesisBl);
-    const dtx = await factory.getDeployTransaction(
-      genesisBl,
-      confs,
-      args.threshold,
-      args.name, args.symbol,
-      abiCIDBytes
-    );
-    assert(dtx.data !== undefined, 'Deploy tx cannot be empty');
-    const inputMsg = newCInputEncMsg(deployer.getFactoryAddress(), dtx.data!.toString());
+
+    const abiCIDStr = getImportedCID(entries, 'abi.json').toString();
+    const abiCIDBytes = cid0ToBytes32Str(abiCIDStr);
+
+    const constrArgs: FunctionArg[] = [
+      { name: 'genesisBl', value: genesisBl },
+      { name: 'confirmers', value: confs },
+      { name: 'threshold', value: args.threshold },
+      { name: 'name_', value: args.name },
+      { name: 'symbol_', value: args.symbol },
+      { name: 'abiCID', value: abiCIDBytes }
+    ];
+    const inputMsg = newFactoryInputDecMsg(
+      deployer.getFactoryAddress(),
+      constrArgs, factory.bytecode,
+      abiCIDStr,
+    )
 
     const result = await fnClient.sendContractInput(inputMsg);
     const c = result.contractsCreated?.at(0);

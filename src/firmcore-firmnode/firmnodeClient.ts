@@ -1,12 +1,11 @@
 import { AddressStr } from "firmcontracts/interface/types.js";
 import { FirmnodeBlockstore } from "./blockstore.js";
-import { CInputEncMsg, CInputEncMsgCodec, CInputMsgCodec, ContractMsg, Message, MessageCodec } from "./message.js";
+import { CInputEncMsg, CInputEncMsgCodec, CInputMsgCodec, ContractMsg, Message, MessageCodec } from "../firmnode-base/message.js";
 import { FirmnodeSocket, SendInputApplied, SendResult, SendSuccess, isError, resIsAppliedTx } from "./socketTypes.js";
 import { isLeft } from "fp-ts/lib/Either.js";
 import { NotFound } from "../exceptions/NotFound.js";
 import { UnixFSEntry, UnixFSFile, exporter } from "ipfs-unixfs-exporter";
 import { Type } from "io-ts";
-import { TypeOf } from "io-ts";
 import { FsEntries, createCARFile } from "../helpers/car.js";
 import { ImportResult } from "ipfs-unixfs-importer";
 
