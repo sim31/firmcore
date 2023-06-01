@@ -17,6 +17,7 @@ import assert from '../helpers/assert.js';
 import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet.js';
 import { bytes32StrToCid0, cid0ToBytes32Str } from 'firmcontracts/interface/cid.js';
 import { isDefined } from '../helpers/defined.js';
+import ganache from 'ganache';
 
 interface Chain {
   contract: EdenPlusFractal;
@@ -25,6 +26,8 @@ interface Chain {
   headBlockId: BlockIdStr;
 }
 
+// TODO: remove for serialization:
+// * Chain.contract
 interface FirmCoreState {
   chains: Record<Address, Chain>;
   blocks: Record<BlockId, OptExtendedBlockValue>;
@@ -79,8 +82,14 @@ export class FirmCore implements IFirmCore {
     // console.log("_init 1", !_ganacheProv, !_provider, !_signer);
     // assert(!_underlyingProvider && !_provider && !_signer, "Already initialized");
     assert(!this._provider && !this._signer, "Already initialized");
-    this._provider = new ethers.providers.JsonRpcProvider('http://localhost:60501');
-    // _provider = new ethers.providers.Web3Provider(_underlyingProvider as any);
+
+    const _ganacheProv = ganache.provider({
+      fork: {
+        network: 'goerli'
+      },
+    });
+    this._provider = new ethers.providers.Web3Provider(_ganacheProv as any);
+
     this._signer = this._provider.getSigner(0);
 
     const signerBalance = await this._signer!.getBalance();
@@ -95,6 +104,9 @@ export class FirmCore implements IFirmCore {
     this._implLib = await this._deployer.deployFirmChainImpl(this._abiLib);
 
     this._accSystemLib = await this._deployer.deployAccountSystemImpl();
+
+    const fsContract = await this._deployer.deployFilesystem();
+    console.log('fsContract: ', fsContract.address);
   }
 
   async shutDown(): Promise<void> {
@@ -148,14 +160,14 @@ export class FirmCore implements IFirmCore {
       return createAddConfirmerOp(conf.addr, 1);
     });
 
-    const genesisBl = await createGenesisBlockVal([], ZeroId, confOps, args.threshold);
+    const genesisBl = await createGenesisBlockVal([], confOps, args.threshold);
 
     const dtx = await factory.getDeployTransaction(
       genesisBl,
       confs,
       args.threshold,
       args.name, args.symbol,
-      '0x0'  // FIXME
+      randomBytes32Hex(),
     );
     const bytecode = dtx.data;
     assert(bytecode !== undefined, 'bytecode should be defined');
@@ -653,7 +665,7 @@ export class FirmCore implements IFirmCore {
 
         const block = await createUnsignedBlockVal(
           prevBlock, chain.contract, serializedMsgs,
-          undefined, confOps, newThreshold
+          confOps, newThreshold
         );
 
         const bId = getBlockId(block.header);

@@ -43,6 +43,7 @@
     "ethers": "^5.7.2",
     "firmcontracts": "github:sim31/firmcontracts",
     "fp-ts": "^2.15.0",
+    "ganache": "^7.8.0",
     "io-ts": "^2.2.20",
     "ipfs-unixfs-exporter": "^13.1.5",
     "ipfs-unixfs-importer": "^15.1.5",

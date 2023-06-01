@@ -38,7 +38,6 @@ export interface Chain {
   genesisBlockId: BlockId;
 
   headBlockId: () => Promise<BlockId>;
-  headLink: () => Promise<IPFSLink>;
   //getBlock(id: BlockId): Promise<Blo
 }
 
@@ -261,7 +260,6 @@ export interface EFBlock {
   timestamp: Timestamp;
   msgs: EFMsg[];
   state: EFChainAccessor;
-  link: IPFSLink;
 }
 
 export type EFBlockPOD = Overwrite<EFBlock, { state: EFChainState }>;
