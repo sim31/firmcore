@@ -13,6 +13,8 @@ import { Overwrite } from 'utility-types';
 
 const { cid0ToBytes32Str } = cidPkg;
 
+export type MTime = NonNullable<FileCandidate['mtime']>;
+
 export type FsEntries = Array<FileCandidate | DirectoryCandidate>;
 
 const importOptions: ImporterOptions = {
@@ -59,10 +61,16 @@ export function getImportedCIDBytes(results: ImportResult[], entryPath: string) 
   return cid0ToBytes32Str(entry.cid.toV0().toString());
 }
 
-export function objectToFile(obj: Record<string, unknown>): FileCandidate {
+export interface FileOptions {
+  mtime?: MTime,
+  mode?: number
+}
+
+export function objectToFile(obj: Record<string, unknown>, options?: FileOptions): FileCandidate {
   const encoder = new TextEncoder();
   const file = {
-    content: encoder.encode(stringify(obj, { space: 2 }))
+    content: encoder.encode(stringify(obj, { space: 2 })),
+    ...options
   };
   return file;
 }
@@ -145,10 +153,10 @@ export async function createCARFile(
   }
 }
 
-export async function readCARFile(carFile: ReadableStream<Uint8Array>): Promise<UnixFSEntry> {
-  const it = toIt(carFile);
+export async function readCARFile(carFile: AsyncIterable<Uint8Array>): Promise<UnixFSEntry> {
+  // const it = toIt(carFile);
 
-  const reader = await CarReader.fromIterable(it);
+  const reader = await CarReader.fromIterable(carFile);
 
   const roots = await reader.getRoots();
   if (roots.length !== 1) {

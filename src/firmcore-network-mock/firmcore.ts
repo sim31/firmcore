@@ -18,7 +18,7 @@ import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet.j
 import { bytes32StrToCid0, cid0ToBytes32Str } from 'firmcontracts/interface/cid.js';
 import { isDefined } from '../helpers/defined.js';
 import ganache from 'ganache';
-import { CarFileInfo, anyToCAR, createCARFile, objectToCAR, objectToFile, readCARFile, unixfsFileToObj } from '../helpers/car.js';
+import { CarFileInfo, FileOptions, MTime, anyToCAR, createCARFile, objectToCAR, objectToFile, readCARFile, unixfsFileToObj } from '../helpers/car.js';
 import stringify from 'json-stable-stringify-without-jsonify';
 import { FileCandidate } from 'ipfs-unixfs-importer';
 
@@ -104,19 +104,19 @@ export class FirmCore implements IFirmCore {
     };
   }
 
-  private serializeFcState(): FileCandidate {
+  private serializeFcState(options?: FileOptions): FileCandidate {
     const serializable = this._toSerializableFcState();
-    return objectToFile(serializable);
+    return objectToFile(serializable, options);
   }
 
-  async exportAsCAR(): Promise<CarFileInfo> {
-    const file = this.serializeFcState();
+  async exportAsCAR(options?: FileOptions): Promise<CarFileInfo> {
+    const file = this.serializeFcState(options);
     const car = await createCARFile([file], { wrapInDir: false });
     return car;
   }
 
-  private async initFromCar(car: Blob) {
-    const fsEntry = await readCARFile(car.stream());            
+  private async initFromCar(car: AsyncIterable<Uint8Array>) {
+    const fsEntry = await readCARFile(car);            
     if (fsEntry.type !== 'file') {
       throw new Error('Single file expected');
     }
@@ -124,15 +124,16 @@ export class FirmCore implements IFirmCore {
 
     for (const chain of fcState.chains) {
       const constructorArgs = chain.constructorArgs;
-      const efChain = await this.createEFChain(constructorArgs);
+      const genesisBl = fcState.blocks[chain.genesisBlId];
+      if (genesisBl === undefined) {
+        throw new InvalidArgument('Invalid car: chain.blocks does not contain genesis block');
+      }
+      const efChain = await this.createEFChain(constructorArgs, genesisBl);
       if (efChain.address !== chain.contract) {
-        throw new InvalidArgument('Invalid car: chain.contract')
+        throw new InvalidArgument(`Invalid car: chain.contract: ${efChain.address} !== ${chain.contract}`);
       }
       if (efChain.genesisBlockId !== chain.genesisBlId) {
         throw new InvalidArgument('Invalid car: chain.genesisBlId')
-      }
-      if (await efChain.headBlockId() !== chain.headBlockId) {
-        throw new InvalidArgument('Invalid car: chain.headBlockId')
       }
 
       const ordBlocks = fcState.orderedBlocks[chain.contract];
@@ -146,7 +147,7 @@ export class FirmCore implements IFirmCore {
         }
 
         const remainingBlocks = [
-          [ordBlocks[0]![0]!.slice(1)],
+          [...ordBlocks[0]!.slice(1)],
           ...ordBlocks.slice(1)
         ]
         for (const slot of remainingBlocks) {
@@ -156,11 +157,16 @@ export class FirmCore implements IFirmCore {
               throw new InvalidArgument('Invalid car: referenced block not found');
             }
             const prevBlockId = block.header.prevBlockId;
-            const msgs = fcState.msgs[chain.contract];
+            const msgs = fcState.msgs[blockId];
             if (msgs === undefined) {
               throw new InvalidArgument('Invalid car: messages for a block missing');
             }
-            const bl = await efChain.builder.createBlock(utils.hexlify(prevBlockId), msgs);
+            const bl = await this._createBlock(
+              efChain.blockById,
+              utils.hexlify(prevBlockId),
+              msgs,
+              block
+            );
             if (bl.id !== getBlockId(block.header)) {
               throw new InvalidArgument('Invalid car: blocks id');
             }
@@ -177,9 +183,11 @@ export class FirmCore implements IFirmCore {
       }
     }
 
-    const carInfo = await this.exportAsCAR();
-    if (carInfo.rootCID !== fsEntry.cid) {
-      throw new Error('Initialization from CAR produced different CID than in the CAR');
+    const carInfo = await this.exportAsCAR(fsEntry.unixfs);
+    const ourCID = carInfo.rootCID.toV0().toString();
+    const originalCID = fsEntry.cid.toV0().toString();
+    if (ourCID !== originalCID) {
+      throw new Error(`Initialization from CAR produced different CID than in the CAR ${ourCID} !== ${originalCID}`);
     }
   }
 
@@ -195,7 +203,7 @@ export class FirmCore implements IFirmCore {
   //   this._st = obj;
   // }
 
-  async init(car?: Blob): Promise<void> {
+  async init(car?: AsyncIterable<Uint8Array>): Promise<void> {
     // console.log("_init 1", !_ganacheProv, !_provider, !_signer);
     // assert(!_underlyingProvider && !_provider && !_signer, "Already initialized");
     assert(!this._provider && !this._signer, "Already initialized");
@@ -225,9 +233,9 @@ export class FirmCore implements IFirmCore {
     const fsContract = await this._deployer.deployFilesystem();
     console.log('fsContract: ', fsContract.address);
 
-    // if (car !== undefined) {
-    //   await initFromCar(car);
-    // }
+    if (car !== undefined) {
+      await this.initFromCar(car);
+    }
   }
 
   async shutDown(): Promise<void> {
@@ -259,10 +267,18 @@ export class FirmCore implements IFirmCore {
     return metadataId;
   }
 
+  private async _createGenesisBlock(args: Required<EFConstructorArgs, 'threshold'>): Promise<OptExtendedBlockValue> {
+    const confOps = args.confirmers.map(conf => {
+      return createAddConfirmerOp(conf.address, 1);
+    });
+    return createGenesisBlockVal([], confOps, args.threshold);
+  }
+
   private async _deployEFChain(
     fchainImpl: FirmChainImpl,
     accSystemImpl: AccountSystemImpl,
     args: Required<EFConstructorArgs, 'threshold'>,
+    genesisBl?: OptExtendedBlockValue
   ) {
     const { deployer } = this._getInitialized();
 
@@ -276,21 +292,20 @@ export class FirmCore implements IFirmCore {
       const metadataId = await this._storeAccount(conf);
       confs.push({
         addr: conf.address,
-        metadataId,
+        metadataId: cid0ToBytes32Str(metadataId),
       });
     }
-    const confOps = confs.map(conf => {
-      return createAddConfirmerOp(conf.addr, 1);
-    });
 
-    const genesisBl = await createGenesisBlockVal([], confOps, args.threshold);
+    if (genesisBl === undefined) {
+      genesisBl = await this._createGenesisBlock(args);
+    }
 
     const dtx = await factory.getDeployTransaction(
       genesisBl,
       confs,
       args.threshold,
       args.name, args.symbol,
-      randomBytes32Hex(),
+      utils.hexZeroPad('0x00', 32)
     );
     const bytecode = dtx.data;
     assert(bytecode !== undefined, 'bytecode should be defined');
@@ -318,7 +333,8 @@ export class FirmCore implements IFirmCore {
       return undefined;
     }
 
-    const fullAccount = this._st.fullAccounts[val.metadataId];
+    const metadataCID = bytes32StrToCid0(val.metadataId);
+    const fullAccount = this._st.fullAccounts[metadataCID];
 
     if (!fullAccount) {
       return {
@@ -515,7 +531,7 @@ export class FirmCore implements IFirmCore {
     };
   }
 
-  async createEFChain(args: EFConstructorArgs): Promise<EFChain> {
+  async createEFChain(args: EFConstructorArgs, genesisBlock?: OptExtendedBlockValue): Promise<EFChain> {
     // TODO: Construct EFConstructorArgsFull from args
     let nargs: Required<EFConstructorArgs, 'threshold'>;
     if (args.threshold) {
@@ -530,7 +546,7 @@ export class FirmCore implements IFirmCore {
     const { provider, implLib, accSystemLib } = this._getInitialized();
 
     await provider.send('evm_mine', []);
-    const { contract, genesisBl } = await this._deployEFChain(implLib, accSystemLib, nargs);
+    const { contract, genesisBl } = await this._deployEFChain(implLib, accSystemLib, nargs, genesisBlock);
 
     const bId = getBlockId(genesisBl.header);
     this._st.blocks[bId] = genesisBl;
@@ -556,6 +572,124 @@ export class FirmCore implements IFirmCore {
       return chain;
     }
   }
+
+  private async _createBlock(
+    blockById: EFChain['blockById'],
+    prevBlockId: BlockId,
+    messages: EFMsg[],
+    bl?: OptExtendedBlockValue
+  ): Promise<EFBlock> {
+    // TODO: Check if we have prevBlock
+    const prevBlock = this._st.blocks[prevBlockId];
+    const prevBlockNum = this._st.blockNums[prevBlockId];
+    if (!prevBlock || (prevBlockNum === undefined)) {
+      throw new NotFound("Previous block not found");
+    }
+    const chain = this._st.chains[prevBlock.contract ?? 0];
+    if (!chain) {
+      throw new NotFound("Chain not found");
+    }
+
+    const ordBlocks = this._st.orderedBlocks[chain.contract.address];
+    if (!ordBlocks) {
+      throw new NotFound("Blocks of the chain not found");
+    }
+
+    const serializedMsgs: Message[] = [];
+    let confOps: ConfirmerOpValue[] | undefined;
+    let newThreshold: number | undefined;
+
+    for (const msg of messages) {
+      if (msg.name === 'updateConfirmers') {
+        if (newThreshold || confOps) {
+          throw new InvalidArgument(
+            "Unsupported operation: shouldn't update confirmers twice in the same block"
+          );
+        }
+
+        newThreshold = msg.threshold;
+        confOps = msg.ops.map((op) => this._convertConfirmerOp(op));
+      } else if (bl === undefined) {
+        if (msg.name === 'createAccount') {
+          const metadataId = await this._storeAccount(msg.account);
+          const acc: AccountValue = {
+            addr: msg.account.address ?? ZeroAddr,
+            metadataId: cid0ToBytes32Str(metadataId),
+          };
+          serializedMsgs.push(
+            createMsg(chain.contract, 'createAccount', [acc])
+          );
+        } else if (msg.name === 'removeAccount') {
+          serializedMsgs.push(
+            createMsg(chain.contract, 'removeAccount', [msg.accountId])
+          );
+        } else if (msg.name === 'setDir') {
+          const b32 = cid0ToBytes32Str(msg.dir);
+          serializedMsgs.push(
+            createMsg(chain.contract, 'setDir', [b32])
+          );
+        } else if (msg.name === 'updateAccount') {
+          const metadataId = await this._storeAccount(msg.newAccount);
+          const newAcc = {
+            addr: msg.newAccount.address ?? ZeroAddr,
+            metadataId: cid0ToBytes32Str(metadataId)
+          };
+          serializedMsgs.push(
+            createMsg(chain.contract, 'updateAccount', [msg.accountId, newAcc]),
+          );
+        } else if (msg.name === 'efSubmitResults') {
+          const efResults: BreakoutResults[] = msg.results.map(res => {
+            return {
+              delegate: res.delegate ?? ZeroId,
+              ranks: res.ranks.map(rank => rank ?? ZeroId),
+            };
+          });
+
+          serializedMsgs.push(
+            createMsg(chain.contract, 'submitResults', [efResults])
+          );
+        }
+      }
+    }
+
+    const block = bl === undefined 
+      ? await createUnsignedBlockVal(
+          prevBlock, chain.contract, serializedMsgs,
+          confOps, newThreshold
+        )
+      : bl;
+
+    const bId = getBlockId(block.header);
+    const blockNum = prevBlockNum + 1;
+    this._st.blocks[bId] = block;
+    this._st.blockNums[bId] = blockNum;
+    this._st.msgs[bId] = messages;
+    this._st.confirmations[bId] = [];
+    const confSet = this._confirmerSetFromBlock(block);
+    const confirmStatus = this._confirmStatusFromBlock(prevBlock, []);
+    this._st.states[bId] = {
+      delegates: emptyDelegates,
+      directoryId: ZeroId,
+      confirmations: [],
+      confirmationStatus: confirmStatus,
+      confirmerSet: confSet,
+      allAccounts: false,
+    }
+    let slot = ordBlocks[blockNum];
+    if (!slot) {
+      slot = [];
+      ordBlocks[blockNum] = slot;
+    }
+    slot.push(bId);
+
+    // Construct EFBlock version of the block just created
+    const efBlock = await blockById(bId);
+    if (!efBlock) {
+      throw new ProgrammingError("Unable to retrieve created block");
+    }
+    return efBlock;
+  }
+
 
   async getChain(address: Address): Promise<EFChain | undefined> {
     this._getInitialized();
@@ -737,111 +871,7 @@ export class FirmCore implements IFirmCore {
       },
 
       createBlock: async (prevBlockId: BlockId, messages: EFMsg[]): Promise<EFBlock> => {
-        // TODO: Check if we have prevBlock
-        const prevBlock = this._st.blocks[prevBlockId];
-        const prevBlockNum = this._st.blockNums[prevBlockId];
-        if (!prevBlock || (prevBlockNum === undefined)) {
-          throw new NotFound("Previous block not found");
-        }
-        const chain = this._st.chains[prevBlock.contract ?? 0];
-        if (!chain) {
-          throw new NotFound("Chain not found");
-        }
-
-        const ordBlocks = this._st.orderedBlocks[chain.contract.address];
-        if (!ordBlocks) {
-          throw new NotFound("Blocks of the chain not found");
-        }
-
-        const serializedMsgs: Message[] = [];
-        let confOps: ConfirmerOpValue[] | undefined;
-        let newThreshold: number | undefined;
-
-        for (const msg of messages) {
-          if (msg.name === 'updateConfirmers') {
-            if (newThreshold || confOps) {
-              throw new InvalidArgument(
-                "Unsupported operation: shouldn't update confirmers twice in the same block"
-              );
-            }
-
-            newThreshold = msg.threshold;
-            confOps = msg.ops.map((op) => this._convertConfirmerOp(op));
-          } else if (msg.name === 'createAccount') {
-            const metadataId = await this._storeAccount(msg.account);
-            const acc: AccountValue = {
-              addr: msg.account.address ?? ZeroAddr,
-              metadataId,
-            };
-            serializedMsgs.push(
-              createMsg(chain.contract, 'createAccount', [acc])
-            );
-          } else if (msg.name === 'removeAccount') {
-            serializedMsgs.push(
-              createMsg(chain.contract, 'removeAccount', [msg.accountId])
-            );
-          } else if (msg.name === 'setDir') {
-            const b32 = cid0ToBytes32Str(msg.dir);
-            serializedMsgs.push(
-              createMsg(chain.contract, 'setDir', [b32])
-            );
-          } else if (msg.name === 'updateAccount') {
-            const metadataId = this._storeAccount(msg.newAccount);
-            const newAcc = {
-              addr: msg.newAccount.address ?? ZeroAddr,
-              metadataId,
-            };
-            serializedMsgs.push(
-              createMsg(chain.contract, 'updateAccount', [msg.accountId, newAcc]),
-            );
-          } else if (msg.name === 'efSubmitResults') {
-            const efResults: BreakoutResults[] = msg.results.map(res => {
-              return {
-                delegate: res.delegate ?? ZeroId,
-                ranks: res.ranks.map(rank => rank ?? ZeroId),
-              };
-            });
-
-            serializedMsgs.push(
-              createMsg(chain.contract, 'submitResults', [efResults])
-            );
-          }
-        }
-
-        const block = await createUnsignedBlockVal(
-          prevBlock, chain.contract, serializedMsgs,
-          confOps, newThreshold
-        );
-
-        const bId = getBlockId(block.header);
-        const blockNum = prevBlockNum + 1;
-        this._st.blocks[bId] = block;
-        this._st.blockNums[bId] = blockNum;
-        this._st.msgs[bId] = messages;
-        this._st.confirmations[bId] = [];
-        const confSet = this._confirmerSetFromBlock(block);
-        const confirmStatus = this._confirmStatusFromBlock(prevBlock, []);
-        this._st.states[bId] = {
-          delegates: emptyDelegates,
-          directoryId: ZeroId,
-          confirmations: [],
-          confirmationStatus: confirmStatus,
-          confirmerSet: confSet,
-          allAccounts: false,
-        }
-        let slot = ordBlocks[blockNum];
-        if (!slot) {
-          slot = [];
-          ordBlocks[blockNum] = slot;
-        }
-        slot.push(bId);
-
-        // Construct EFBlock version of the block just created
-        const efBlock = await blockById(bId);
-        if (!efBlock) {
-          throw new ProgrammingError("Unable to retrieve created block");
-        }
-        return efBlock;
+        return this._createBlock(blockById, prevBlockId, messages);
       }
     }
 

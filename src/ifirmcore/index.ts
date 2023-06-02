@@ -536,7 +536,7 @@ export interface IFirmCore {
   readonly NullAccountId: AccountId;
   readonly NullIPFSLink: IPFSLink;
 
-  init(car?: Blob): Promise<void>;
+  init(car?: AsyncIterable<Uint8Array>): Promise<void>;
   shutDown(): Promise<void>;
   createEFChain(args: EFConstructorArgs): Promise<EFChain>;
   getChain(address: Address): Promise<EFChain | undefined>;
