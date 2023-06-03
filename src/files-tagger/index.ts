@@ -1,10 +1,15 @@
 import { CID, create, IPFSHTTPClient } from 'kubo-rpc-client';
 import { CarFileInfo } from '../helpers/car.js';
+import { CIDStr } from '../ifirmcore/index.js';
+import { arrayToRecord } from '../helpers/toRecord.js';
 
 export interface Tag {
   name: string,
-  cidStr: string
+  cidStr: CIDStr
 }
+
+export type TagsByName = Record<string, Tag>;
+export type TagsByCID = Record<CIDStr, Tag>
 
 export class FilesTagger {
   protected _ipfsClient: IPFSHTTPClient;
@@ -79,6 +84,20 @@ export class FilesTagger {
     await this.createTag(tagName, car);
   }
 
+  async getTag(tagName: string): Promise<Tag> {
+    const firmPath = `${this._pathPrefix}/${tagName}`;
+    try {
+      const stat = await this._ipfsClient.files.stat(firmPath);
+      return {
+        name: tagName,
+        cidStr: stat.cid.toV0().toString(),
+      }
+    } catch (err: any) {
+      console.error('Error getting a tag: ', err);
+      throw err;
+    }
+  }
+
   async ls(): Promise<Tag[]> {
     const resp = await this._ipfsClient.files.ls(this._pathPrefix);
     const tags: Tag[] = [];
@@ -87,6 +106,16 @@ export class FilesTagger {
       tags.push({ cidStr: cid.toV0().toString(), name: item.name });
     }
     return tags;
+  }
+
+  async lsByName(): Promise<TagsByName> {
+    const list = await this.ls();
+    return arrayToRecord(list, 'name');
+  }
+
+  async lsByCID(): Promise<TagsByCID> {
+    const list = await this.ls();
+    return arrayToRecord(list, 'cidStr');
   }
 
   async getTaggedAsCAR(tag: Tag): Promise<AsyncIterable<Uint8Array>> {

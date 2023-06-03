@@ -16,6 +16,8 @@ export type PlatformAccountId = string;
 export type TokenBalance = number;
 export type OptAccountId = AccountId | undefined;
 export type Timestamp = number;
+export type CIDStr = string;
+export type Await<T> = Promise<T> | T;
 
 export interface Confirmer {
   address: Address;
@@ -540,6 +542,7 @@ export interface IFirmCore {
   shutDown(): Promise<void>;
   createEFChain(args: EFConstructorArgs): Promise<EFChain>;
   getChain(address: Address): Promise<EFChain | undefined>;
+  lsChains(): Await<Address[]>;
   createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer>;
 
   exportAsCAR(): Promise<CarFileInfo>
