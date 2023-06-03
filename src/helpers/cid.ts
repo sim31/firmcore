@@ -18,6 +18,21 @@ export function urlToCid0(value: string): string {
   }
 }
 
+export function isIPFSUrl(value: string): boolean {
+  return value.slice(0, 7) === 'ipfs://';
+}
+
+export function parseIPFSId(value: string): CIDStr {
+  let cidStr: string;
+  if (isIPFSUrl(value)) {
+    cidStr = urlToCid0(value);
+  } else {
+    cidStr = value;
+  }
+  const r = CID.parse(cidStr);
+  return r.toV0().toString();
+}
+
 export function toCIDStr(cid: CID): CIDStr {
   return cid.toV0().toString();
 }

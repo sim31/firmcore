@@ -85,11 +85,13 @@ export class FirmCore implements IFirmCore {
   private _provider: ethers.providers.JsonRpcProvider | undefined;
   private _signer: ethers.providers.JsonRpcSigner | undefined;
 
-  private _st: FirmCoreState = initFirmCoreState;
+  private _st: FirmCoreState;
 
   constructor(verbose: boolean = false, quiet: boolean = true) {
     this._verbose = verbose;
     this._quiet = quiet;
+
+    this._st = JSON.parse(JSON.stringify(initFirmCoreState));
   }
 
   private _toSerializableFcState(): SerializableFcState {

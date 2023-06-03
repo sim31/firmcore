@@ -3,7 +3,7 @@ import { OpNotSupprtedError } from "../exceptions/OpNotSupported.js";
 import { FilesTagger, Tag, TagsByName } from "../files-tagger/index.js";
 import { toCIDStr } from "../helpers/cid.js";
 import { IConstructor } from "../helpers/iconstructor.js";
-import { IFirmCore } from "../ifirmcore/index.js";
+import { CIDStr, IFirmCore } from "../ifirmcore/index.js";
 
 export class FirmcoreManager<T extends IFirmCore> {
   private _tagger: FilesTagger;
@@ -42,6 +42,28 @@ export class FirmcoreManager<T extends IFirmCore> {
     return this._current;
   }
 
+  async new(): Promise<IFirmCore> {
+    delete this._current;
+    delete this._currentTag;
+
+    this._current = new this._fcClass();
+    await this._current.init();
+
+    return this._current;
+  }
+
+  async selectByCID(cid: CIDStr): Promise<IFirmCore> {
+    delete this._current;
+    delete this._currentTag;
+
+    const car = await this._tagger.getCAR(cid);
+
+    this._current = new this._fcClass();
+    await this._current.init(car);
+
+    return this._current;
+  }
+
   private _updateCache(tag: Tag) {
     this._cachedTags[tag.name] = tag;
   }
@@ -74,8 +96,6 @@ export class FirmcoreManager<T extends IFirmCore> {
     } else {
       return await this._tagger.lsByName();
     }
-
   }
-  // TODO: selectTagged
 
 }

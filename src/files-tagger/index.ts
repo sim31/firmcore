@@ -118,9 +118,14 @@ export class FilesTagger {
     return arrayToRecord(list, 'cidStr');
   }
 
-  async getTaggedAsCAR(tag: Tag): Promise<AsyncIterable<Uint8Array>> {
-    const cid = CID.parse(tag.cidStr);
+  async getCAR(cidStr: CIDStr): Promise<AsyncIterable<Uint8Array>> {
+    const cid = CID.parse(cidStr);
     const resp = await this._ipfsClient.dag.export(cid) as AsyncIterable<Uint8Array>;
     return resp;
   }
+
+  async getTaggedAsCAR(tag: Tag): Promise<AsyncIterable<Uint8Array>> {
+    return this.getCAR(tag.cidStr);
+  }
+
 }
