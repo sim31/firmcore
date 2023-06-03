@@ -27,6 +27,10 @@ export class FirmcoreManager<T extends IFirmCore> {
       return this._current;
     }
 
+    if (!this._tagger.isInitialized()) {
+      await this._tagger.init();
+    }
+
     this._current = new this._fcClass();
 
     const tags = await this._retrieveTags();

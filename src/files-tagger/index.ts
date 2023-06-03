@@ -14,11 +14,30 @@ export type TagsByCID = Record<CIDStr, Tag>
 export class FilesTagger {
   protected _ipfsClient: IPFSHTTPClient;
   protected readonly _pathPrefix = '/.firm';
+  private _initialized: boolean = false;
 
   constructor() {
     this._ipfsClient = create({
       url: 'http://127.0.0.1:5001/api/v0'
     });
+  }
+
+  async init() {
+    try {
+      const stat = await this._ipfsClient.files.stat(this._pathPrefix);
+    } catch (err) {
+      await this._ipfsClient.files.mkdir(
+        this._pathPrefix,
+        {
+          parents: true,
+          cidVersion: 0,
+        }
+      );
+    }
+  }
+
+  isInitialized(): boolean {
+    return this._initialized;
   }
 
   // async getEntryStat(address: string) {
