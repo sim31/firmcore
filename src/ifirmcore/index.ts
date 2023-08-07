@@ -81,14 +81,14 @@ export type ExtAccountMap = Record<PlatformId, PlatformAccountId>;
 
 export interface Account {
   id: AccountId;
+  name: string;
   address?: Address;
-  name?: string;
   extAccounts: ExtAccountMap;
 }
 export function newAccount(
   extAccounts: ExtAccountMap,
+  name: string,
   address?: Address,
-  name?: string,
   id?: AccountId,
 ): Account {
   return { id: id ?? 0, address, name, extAccounts };
@@ -287,7 +287,7 @@ export type AccountWithAddress = Required<Account, 'address'>;
 export function newAccountWithAddress(
   extAccounts: ExtAccountMap,
   address: Address,
-  name?: string,
+  name: string,
   id?: AccountId,
 ): AccountWithAddress {
   return { id: id ?? 0, address, name, extAccounts };

@@ -294,6 +294,7 @@ export class FirmCore implements IFirmCore {
       const metadataId = await this._storeAccount(conf);
       confs.push({
         addr: conf.address,
+        name: conf.name,
         metadataId: cid0ToBytes32Str(metadataId),
       });
     }
@@ -341,6 +342,7 @@ export class FirmCore implements IFirmCore {
     if (!fullAccount) {
       return {
         id: accountId,
+        name: val.name,
         address: val.addr ? val.addr : undefined,
         extAccounts: {},
       }
@@ -616,6 +618,7 @@ export class FirmCore implements IFirmCore {
           const metadataId = await this._storeAccount(msg.account);
           const acc: AccountValue = {
             addr: msg.account.address ?? ZeroAddr,
+            name: msg.account.name,
             metadataId: cid0ToBytes32Str(metadataId),
           };
           serializedMsgs.push(
@@ -634,6 +637,7 @@ export class FirmCore implements IFirmCore {
           const metadataId = await this._storeAccount(msg.newAccount);
           const newAcc = {
             addr: msg.newAccount.address ?? ZeroAddr,
+            name: msg.newAccount.name,
             metadataId: cid0ToBytes32Str(metadataId)
           };
           serializedMsgs.push(
