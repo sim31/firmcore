@@ -1,5 +1,5 @@
 import { IFirmCore } from './src/ifirmcore/index.js';
-import { FirmCore } from './src/firmcore-network-mock/firmcore.js';
+import { FirmCore } from './src/metamask-firmcore/firmcore.js';
 import { FirmcoreManager } from './src/firmcore-manager/index.js';
 import { FilesTagger } from './src/files-tagger/index.js';
 

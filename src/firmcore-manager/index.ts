@@ -22,7 +22,7 @@ export class FirmcoreManager<T extends IFirmCore> {
     return this._cachedTags;
   }
 
-  async get(): Promise<IFirmCore> {
+  async get(noDeploy?: boolean): Promise<IFirmCore> {
     if (this._current !== undefined) {
       return this._current;
     }
@@ -31,18 +31,19 @@ export class FirmcoreManager<T extends IFirmCore> {
       await this._tagger.init();
     }
 
-    this._current = new this._fcClass();
+    const newCurrent = new this._fcClass();
 
     const tags = await this._retrieveTags();
 
     this._currentTag = Object.values(tags)[0];
     if (this._currentTag === undefined) {
-      await this._current.init();
+      await newCurrent.init(undefined, noDeploy);
     } else {
       const car = await this._tagger.getTaggedAsCAR(this._currentTag);
-      await this._current.init(car);
+      await newCurrent.init(car, noDeploy);
     }
 
+    this._current = newCurrent;
     return this._current;
   }
 

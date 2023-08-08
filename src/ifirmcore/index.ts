@@ -538,7 +538,11 @@ export interface IFirmCore {
   readonly NullAccountId: AccountId;
   readonly NullIPFSLink: IPFSLink;
 
-  init(car?: AsyncIterable<Uint8Array>): Promise<void>;
+  /**
+   * @param car - CAR file to initialize from (for persistence between firmcore instances)
+   * @param deployLibs - whether to attempt deploying required libraries to the underlying EVM if they are not present yet
+   */
+  init(car?: AsyncIterable<Uint8Array>, noDeploy?: boolean): Promise<void>;
   shutDown(): Promise<void>;
   createEFChain(args: EFConstructorArgs): Promise<EFChain>;
   getChain(address: Address): Promise<EFChain | undefined>;
