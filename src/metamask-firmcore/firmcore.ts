@@ -1,5 +1,5 @@
 import { Overwrite, Required } from 'utility-types';
-import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr, SignatureValue, toValue } from "firmcontracts/interface/types.js";
+import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr, SignatureValue, toValue, XEdenPlusFractal, XEdenPlusFractal__factory } from "firmcontracts/interface/types.js";
 import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await } from "../ifirmcore/index.js";
 import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain.js";
@@ -23,7 +23,7 @@ import { FileCandidate } from 'ipfs-unixfs-importer';
 import { MetaMaskSDK } from '@metamask/sdk';
 
 interface Chain {
-  contract: EdenPlusFractal;
+  contract: XEdenPlusFractal;
   constructorArgs: EFConstructorArgs;
   genesisBlId: BlockIdStr;
   headBlockId: BlockIdStr;
@@ -285,9 +285,9 @@ export class FirmCore implements IFirmCore {
     args: Required<EFConstructorArgs, 'threshold'>,
     genesisBl?: OptExtendedBlockValue
   ) {
-    const { deployer } = this._getInitialized();
+    const { deployer, provider } = this._getInitialized();
 
-    const factory = new EdenPlusFractal__factory({
+    const factory = new XEdenPlusFractal__factory({
       ["contracts/FirmChainImpl.sol:FirmChainImpl"]: fchainImpl.address,
       ["contracts/AccountSystemImpl.sol:AccountSystemImpl"]: accSystemImpl.address,
     }, this._signer);
@@ -311,7 +311,8 @@ export class FirmCore implements IFirmCore {
       confs,
       args.threshold,
       args.name, args.symbol,
-      utils.hexZeroPad('0x00', 32)
+      utils.hexZeroPad('0x00', 32),
+      provider.network.chainId,
     );
     const bytecode = dtx.data;
     assert(bytecode !== undefined, 'bytecode should be defined');
