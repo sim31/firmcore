@@ -206,7 +206,7 @@ export class FirmCore implements IFirmCore {
   async init(car?: AsyncIterable<Uint8Array>, noDeploy?: boolean): Promise<void> {
     // console.log("_init 1", !_ganacheProv, !_provider, !_signer);
     // assert(!_underlyingProvider && !_provider && !_signer, "Already initialized");
-    assert(!this._provider && !this._signer, "Already initialized");
+    // assert(!this._provider && !this._signer, "Already initialized");
 
     // this._provider = new ethers.providers.Web3Provider(_ganacheProv as any);
 
@@ -491,7 +491,8 @@ export class FirmCore implements IFirmCore {
       // console.log("headBlock: ", await chain.contract.getHead());
       // console.log("getBlockId(block): ", getBlockId(block.header));
       // await provider.send('evm_mine', []);
-      await chain.contract.finalizeAndExecute(block);
+      const tx = await chain.contract.finalizeAndExecute(block);
+      await tx.wait();
       const head = await chain.contract.getHead();
       assert(head === blockId, "head of the chain should have been updated");
       // console.log("headBlock2: ", await chain.contract.getHead());
