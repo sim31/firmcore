@@ -51,6 +51,9 @@ export interface ConfirmationStatus {
   final: boolean;
 }
 
+// // If it is executed it means that it is finalized as well
+// export type ExecutionStatus = 'unfinilized' | 'finalized' | 'executed';
+
 export interface ChainState {
   confirmerSet: ConfirmerSet; // This defines requirements for confirming the next block
   confirmations: Address[];   // These are confirmations of this block
@@ -554,4 +557,24 @@ export interface IFirmCore {
   randomAddress(): Address;
   randomBlockId(): BlockId;
   randomIPFSLink(): IPFSLink;
+}
+
+export interface Device {
+  id: string,
+  status: 'connected' | 'disconnected'
+}
+
+export interface ChainNetworkInfo extends Device {
+  name: string,
+  chainId: number,
+  api?: string,
+}
+
+export type MountPoint = ChainNetworkInfo;
+
+export type MountPointChangedCb = (mp: MountPoint) => void;
+
+export interface IMountedFirmCore extends IFirmCore {
+  getMountPoint(): MountPoint;
+  onMountPointChanged(cb: MountPointChangedCb): void;
 }

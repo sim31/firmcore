@@ -1,6 +1,6 @@
 import { Overwrite, Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr, SignatureValue, toValue, XEdenPlusFractal, XEdenPlusFractal__factory } from "firmcontracts/interface/types.js";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await } from "../ifirmcore/index.js";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await, IMountedFirmCore, ChainNetworkInfo, MountPointChangedCb } from "../ifirmcore/index.js";
 import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain.js";
 import { FirmContractDeployer } from 'firmcontracts/interface/deployer.js';
@@ -64,7 +64,7 @@ const initFirmCoreState: FirmCoreState = {
 }
 
 
-export class FirmCore implements IFirmCore {
+export class FirmCore implements IMountedFirmCore {
   readonly NullAddr = ZeroAddr;
   readonly NullBlockId = ZeroId;
   readonly NullAccountId = 0
@@ -82,6 +82,9 @@ export class FirmCore implements IFirmCore {
 
   private _provider: ethers.providers.JsonRpcProvider | undefined;
   private _signer: ethers.providers.JsonRpcSigner | undefined;
+
+  private _mountpoint: ChainNetworkInfo | undefined;
+  private _mpChangedCb: MountPointChangedCb | undefined;
 
   private _st: FirmCoreState;
 
@@ -203,6 +206,31 @@ export class FirmCore implements IFirmCore {
   //   this._st = obj;
   // }
 
+  async _detectMountpoint(): Promise<void> {
+    if (this._provider === undefined) {
+      throw new ProgrammingError('Provider has to be retrieved before initializing chainpoint');
+    }
+    const network = await this._provider.detectNetwork();
+    this._mountpoint = {
+      name: network.name,
+      chainId: network.chainId,
+      id: `chainId: ${network.chainId}`,
+      status: 'connected'
+    }
+    if (this._mpChangedCb) {
+      this._mpChangedCb(this._mountpoint);
+    }
+  }
+
+  onMountPointChanged(cb: MountPointChangedCb): void {
+    this._mpChangedCb = cb;
+  }
+
+  getMountPoint(): ChainNetworkInfo {
+    const { mountpoint } = this._getInitialized();
+    return mountpoint;
+  }
+
   async init(car?: AsyncIterable<Uint8Array>, noDeploy?: boolean): Promise<void> {
     // console.log("_init 1", !_ganacheProv, !_provider, !_signer);
     // assert(!_underlyingProvider && !_provider && !_signer, "Already initialized");
@@ -211,7 +239,7 @@ export class FirmCore implements IFirmCore {
     // this._provider = new ethers.providers.Web3Provider(_ganacheProv as any);
 
     // this._signer = this._provider.getSigner(0);
-    if (window.ethereum === undefined) {
+    if (window.ethereum === undefined || !window.ethereum.isMetaMask) {
       throw new Error("Need metamask");
     }
 
@@ -223,6 +251,12 @@ export class FirmCore implements IFirmCore {
 
     // MetaMask requires requesting permission to connect users accounts
     await this._provider.send("eth_requestAccounts", []);
+
+    await this._detectMountpoint();
+    window.ethereum.on('chainChanged', async () => {
+      window.location.reload();
+    })
+
 
     // The MetaMask plugin also allows signing transactions to
     // send ether and pay to change state within the blockchain.
@@ -257,6 +291,7 @@ export class FirmCore implements IFirmCore {
     return isDefined([
       this._provider, this._signer, this._deployer,
       this._abiLib, this._implLib, this._accSystemLib,
+      this._mountpoint
     ]);
   }
 
@@ -269,6 +304,7 @@ export class FirmCore implements IFirmCore {
       abiLib: this._abiLib!,
       implLib: this._implLib!,
       accSystemLib: this._accSystemLib!,
+      mountpoint: this._mountpoint!,
     }
   }
 
