@@ -178,11 +178,20 @@ export const msgTypeNames = [
   'createAccount',
   'removeAccount',
   'updateAccount',
+  'unknown'
 ] as const;
 export type MsgTypeName = typeof msgTypeNames[number];
 
 export interface Msg {
   readonly name: MsgTypeName;
+}
+
+export interface UnknownMsg extends Msg {
+  readonly name: 'unknown',
+  address: Address;
+}
+export function newUknownMsg(address: Address): UnknownMsg {
+  return { name: 'unknown', address };
 }
 
 export interface EFSubmitResultsMsg extends Msg {
@@ -257,7 +266,7 @@ export function newUpdateAccountMsg(accountId: AccountId, newAccount: Account): 
 
 export type EFMsg =
   CreateAccountMsg | RemoveAccountMsg | UpdateAccountMsg | 
-  UpdateConfirmersMsg | SetDirMsg | EFSubmitResultsMsg;
+  UpdateConfirmersMsg | SetDirMsg | EFSubmitResultsMsg | UnknownMsg
 
 export interface EFBlock {
   id: BlockId;
@@ -574,7 +583,35 @@ export type MountPoint = ChainNetworkInfo;
 
 export type MountPointChangedCb = (mp: MountPoint) => void;
 
+export type SyncStatus = 'insync' | 'behind' | 'forked';
+
+export interface SyncState {
+  status: SyncStatus,
+  // Genesis block counts as first. So this will be 0 if firmchain is not deployed.
+  insyncBlocks: number,
+}
+
+export interface MountedEFChain extends EFChain {
+  getSyncState(): SyncState;
+}
+
+export interface MEFChainPODSlice extends EFChainPODSlice {
+  syncState: SyncState;
+}
+
+export type MValidEFChainPOD = Overwrite<MEFChainPODSlice, {
+  slots: ValidSlots<EFBlockPOD>;
+}>;
+
+export type MNormEFChainPOD = Overwrite<MEFChainPODSlice, {
+  slots: NormalizedSlots<EFBlockPOD>;
+}>;
+
 export interface IMountedFirmCore extends IFirmCore {
   getMountPoint(): MountPoint;
   onMountPointChanged(cb: MountPointChangedCb): void;
+
+  getChain(address: Address): Promise<MountedEFChain | undefined>;
 }
+
+
