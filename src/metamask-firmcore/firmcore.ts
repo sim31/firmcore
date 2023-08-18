@@ -1,6 +1,6 @@
 import { Overwrite, Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr, SignatureValue, toValue, XEdenPlusFractal, XEdenPlusFractal__factory, GenesisBlockValue, BlockValue, InitConfirmerSet, MessageValue } from "firmcontracts/interface/types.js";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await, IMountedFirmCore, ChainNetworkInfo, MountPointChangedCb, MountedEFChain, SyncState, newAccountWithAddress, newUknownMsg, newAccount, newCreateAccountMsg } from "../ifirmcore/index.js";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await, IMountedFirmCore, ChainNetworkInfo, MountPointChangedCb, MountedEFChain, SyncState, newAccountWithAddress, newUknownMsg, newAccount, newCreateAccountMsg, newRemoveAccountMsg, newSetDirMsg, newUpdateAccountMsg, newEFSubmitResultsMsg, newEFBreakoutResults, EFBreakoutResults } from "../ifirmcore/index.js";
 import { BigNumber, BytesLike, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain.js";
 import { FirmContractDeployer } from 'firmcontracts/interface/deployer.js';
@@ -831,11 +831,49 @@ export class FirmCore implements IMountedFirmCore {
     const { args, name } = contract.interface.parseTransaction(t);
     switch (name) {
       case 'createAccount': {
-        const addr = args['addr'] === ZeroAddr ? undefined: args['addr'];
-        const account = newAccount({}, args['name'], addr);
+        const addr = args['account']['addr'] === ZeroAddr ? undefined: args['addr'];
+        const name = args['account']['name'];
+        assert(typeof name === 'string', 'name argument expected');
+        const account = newAccount({}, name, addr);
         return newCreateAccountMsg(account);
       }
-      // TODO: remaining messages
+      case 'removeAccount': {
+        const id = args['id']
+        // TODO: can you check for id being a number
+        assert(id !== undefined, 'id argument expected');
+        return newRemoveAccountMsg(id);
+      }
+      case 'setDir': {
+        const dirId = args['dirId'];
+        assert(typeof dirId === 'string', 'dirId argument expected');
+        const cid0 = bytes32StrToCid0(dirId);
+        return newSetDirMsg(cid0);
+      }
+      case 'updateAccount': {
+        const id = args['id'];
+        // TODO: can you check for id being a number
+        assert(id !== undefined, 'id argument expected');
+        const addr = args['account']['addr'] === ZeroAddr ? undefined: args['addr'];
+        const name = args['account']['name'];
+        assert(typeof name === 'string', 'name argument expected');
+        const account = newAccount({}, name, addr);
+        return newUpdateAccountMsg(id, account);
+      }
+      case 'efSubmitResults': {
+        const resultsArr = args['newResults'];
+        const rResults: EFBreakoutResults[] = []
+        for (const res of resultsArr) {
+          const delegate = res['delegate'];
+          const ranks = res['ranks'];
+          assert(delegate !== undefined, 'delegate expected');
+          assert(typeof ranks === 'object', 'ranks expected');
+          rResults.push(newEFBreakoutResults(delegate, ...ranks));
+        }
+        return newEFSubmitResultsMsg(rResults);
+      }
+      default: {
+        throw new OpNotSupprtedError('Unrecognized message');
+      }
     }
   }
 
@@ -946,7 +984,7 @@ export class FirmCore implements IMountedFirmCore {
       const ordBlocks: BlockId[][] = [[gbId]];
       this._st.orderedBlocks[address] = ordBlocks;
       // TODO: decode known messages (the ones that go to self)
-      this._st.msgs[gbId] = [];
+      this._st.msgs[gbId] = genesisBl.msgs.map(msg => this._decodeMsg(contract, msg));
       this._st.confirmations[gbId] = [];
       const accConfirmers = confirmers.map(c => newAccountWithAddress({}, c.addr, c.name));
       const name = args['name'] as string;
@@ -961,8 +999,6 @@ export class FirmCore implements IMountedFirmCore {
           symbol
         }
       }
-
-      ethers.utils.defaultAbiCoder.decod
 
       // const argGen = args['genesisBl'];
       // const genesisBl: GenesisBlockValue = await createGenesisBlockVal(
