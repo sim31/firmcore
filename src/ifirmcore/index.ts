@@ -55,13 +55,13 @@ export interface ConfirmationStatus {
 // export type ExecutionStatus = 'unfinilized' | 'finalized' | 'executed';
 
 export interface ChainState {
-  confirmerSet: ConfirmerSet; // This defines requirements for confirming the next block
+  confirmerSet?: ConfirmerSet; // This defines requirements for confirming the next block
   confirmations: Address[];   // These are confirmations of this block
-  confirmationStatus: ConfirmationStatus; // This is confirmation status of this block
+  confirmationStatus?: ConfirmationStatus; // This is confirmation status of this block
 }
 
 export interface ChainAccessor {
-  confirmerSet: ConfirmerSet;
+  confirmerSet?: ConfirmerSet;
   confirmations: () => Promise<Address[]>;
   confirmationStatus: () => Promise<ConfirmationStatus>;
 }
@@ -272,8 +272,8 @@ export interface EFBlock {
   id: BlockId;
   prevBlockId: BlockId;
   height: number;
-  timestamp: Timestamp;
-  msgs: EFMsg[];
+  timestamp?: Timestamp;
+  msgs?: EFMsg[];
   state: EFChainAccessor;
 }
 
@@ -377,13 +377,13 @@ export async function toValidSlots<T extends EFBlock | EFBlockPOD>(
   for (const slot of slice) {
     for (const block of slot) {
       const confStatus = block.state.confirmationStatus;
-      let confirmStatus: ConfirmationStatus;
+      let confirmStatus: ConfirmationStatus | undefined;
       if (typeof confStatus === 'function') {
         confirmStatus = await confStatus();
       } else {
         confirmStatus = confStatus;
       }
-      if (confirmStatus.final) {
+      if (confirmStatus !== undefined && confirmStatus.final) {
         if (currentSlot.finalized) {
           throw new ByzantineChain("More than 1 finalized block");
         } else {
@@ -499,16 +499,19 @@ export async function getConfirmerAccounts(
 export async function getEFChainState(block: EFBlock): Promise<EFChainState> {
   const delegates = await getAllDelegates(block);
   const delegateAccounts = await getDelegateAccounts(block, delegates);
-  const allAccounts = await getConfirmerAccounts(
-    block,
-    Object.keys(block.state.confirmerSet.confirmers),
-    delegateAccounts,
-  );
+  const allAccounts = 
+    block.state.confirmerSet !== undefined ?
+      await getConfirmerAccounts(
+        block,
+        Object.keys(block.state.confirmerSet.confirmers),
+        delegateAccounts,
+      )
+      : undefined;
   return {
     delegates,
     allAccounts: false,
-    accountByAddress: allAccounts.accountByAddress,
-    accountById: allAccounts.accountById,
+    accountByAddress: allAccounts?.accountByAddress,
+    accountById: allAccounts?.accountById,
     confirmerSet: block.state.confirmerSet,
     confirmations: await block.state.confirmations(),
     confirmationStatus: await block.state.confirmationStatus(),

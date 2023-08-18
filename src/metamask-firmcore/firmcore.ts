@@ -13,7 +13,7 @@ import { IWallet } from '../iwallet/index.js';
 import { InvalidArgument } from '../exceptions/InvalidArgument.js';
 import { NotFound } from '../exceptions/NotFound.js';
 import { Wallet } from "../wallet/index.js";
-import assert from '../helpers/assert.js';
+import assert, { assertDefined } from '../helpers/assert.js';
 import { defaultThreshold, updatedConfirmerMap } from '../helpers/confirmerSet.js';
 import { bytes32StrToCid0, cid0ToBytes32Str } from 'firmcontracts/interface/cid.js';
 import { isDefined } from '../helpers/defined.js';
@@ -39,6 +39,21 @@ function getAddress(c: XEdenPlusFractal | Address): Address {
   return isContract(c) ? c.address : c;
 }
 
+interface UnknownBlock {
+  blockId: BlockId,
+  prevBlockId: BlockId,
+}
+
+function isKnownBlock(bl: UnknownBlock | OptExtendedBlockValue | undefined): bl is OptExtendedBlockValue {
+  return bl !== undefined && 'header' in bl && 'confirmerSetId' in bl && 'msgs' in bl;
+}
+
+export function assertKnownBlock(bl: UnknownBlock | OptExtendedBlockValue | undefined): OptExtendedBlockValue {
+  assert(isKnownBlock(bl), 'Expected OptExtendedBlockValue');
+  return bl as OptExtendedBlockValue;
+}
+
+
 type Confirmation = {
   address: Address
   sig: SignatureValue
@@ -48,7 +63,7 @@ type Confirmation = {
 // * Chain.contract
 interface FirmCoreState {
   chains: Record<Address, Chain>;
-  blocks: Record<BlockId, OptExtendedBlockValue>;
+  blocks: Record<BlockId, OptExtendedBlockValue | UnknownBlock>;
   blockNums: Record<BlockId, number>;
   orderedBlocks: Record<Address, BlockId[][]>;
   msgs: Record<BlockId, EFMsg[]>;
@@ -174,10 +189,7 @@ export class FirmCore implements IMountedFirmCore {
 
     for (const chain of fcState.chains) {
       const constructorArgs = chain.constructorArgs;
-      const genesisBl = fcState.blocks[chain.genesisBlId];
-      if (genesisBl === undefined) {
-        throw new InvalidArgument('Invalid car: chain.blocks does not contain genesis block');
-      }
+      const genesisBl = assertKnownBlock(fcState.blocks[chain.genesisBlId]);
       const efChain = await this.createEFChain(constructorArgs, genesisBl);
       if (efChain.address !== chain.contract) {
         throw new InvalidArgument(`Invalid car: chain.contract: ${efChain.address} !== ${chain.contract}`);
@@ -202,10 +214,7 @@ export class FirmCore implements IMountedFirmCore {
         ]
         for (const slot of remainingBlocks) {
           for (const blockId of slot) {
-            const block = fcState.blocks[blockId];
-            if (block === undefined) {
-              throw new InvalidArgument('Invalid car: referenced block not found');
-            }
+            const block = assertKnownBlock(fcState.blocks[blockId]);
             const prevBlockId = block.header.prevBlockId;
             const msgs = fcState.msgs[blockId];
             if (msgs === undefined) {
@@ -521,11 +530,8 @@ export class FirmCore implements IMountedFirmCore {
   private async _confirm(blockId: BlockId, walletOrSig: Wallet | Confirmation): Promise<void> {
     const { provider } = this._getInitialized();
 
-    const block = this._st.blocks[blockId];        
-    if (!block) {
-      throw new NotFound("Block not found");
-    }
-    const prevBlock = this._st.blocks[utils.hexlify(block.header.prevBlockId)];
+    const block = assertKnownBlock(this._st.blocks[blockId]);
+    const prevBlock = assertKnownBlock(this._st.blocks[utils.hexlify(block.header.prevBlockId)]);
     const chain = this._st.chains[block.contract ?? 0];
     if (!chain) {
       throw new NotFound("Chain not found");
@@ -706,7 +712,7 @@ export class FirmCore implements IMountedFirmCore {
     bl?: OptExtendedBlockValue
   ): Promise<EFBlock> {
     // TODO: Check if we have prevBlock
-    const prevBlock = this._st.blocks[prevBlockId];
+    const prevBlock = assertKnownBlock(this._st.blocks[prevBlockId]);
     const prevBlockNum = this._st.blockNums[prevBlockId];
     if (!prevBlock || (prevBlockNum === undefined)) {
       throw new NotFound("Previous block not found");
@@ -884,7 +890,6 @@ export class FirmCore implements IMountedFirmCore {
 
     const existingChain = this._st.chains[address];
     let contract: XEdenPlusFractal;
-    let chain: Chain;
 
     if (existingChain === undefined) {
       if (await deployer.contractExists(address)) {
@@ -923,7 +928,7 @@ export class FirmCore implements IMountedFirmCore {
       if (blockNum !== undefined && blockNum < exBlockNum) {
         // Case when the mounted chain misses some of the blocks we have locally
         const st = this._st.states[headBlId];
-        if (!st?.confirmationStatus.final) {
+        if (!st?.confirmationStatus?.final) {
           throw new ProgrammingError('Fork: block finalized in the mounted chain, not final locally');
         }
         return {
@@ -1000,13 +1005,6 @@ export class FirmCore implements IMountedFirmCore {
         }
       }
 
-      // const argGen = args['genesisBl'];
-      // const genesisBl: GenesisBlockValue = await createGenesisBlockVal(
-      //   argGen.messages, argGen.
-      // )
-
-      // contract.interface.decodeFunctionData('')
-      // tx.data
     }
     // TODO: should verify the blocks we are syncing with (the whole chain in local firmcore should be verified fully)
     //   - This will be done once we get proper EVM implementation in the browser
@@ -1017,8 +1015,60 @@ export class FirmCore implements IMountedFirmCore {
     //   - [ ] Get confirmations and execution events on that block
     //   - [ ] Repeat for the next block until we come to the head block in the mounted chain
 
+    const ch = this._st.chains[address];
+    const chain = assertDefined(ch, `${address} chain should have been initialized in the state`);
 
-    contract.deployTransaction
+    // TODO: It sounds like it is possible to filter for an array of event parameters: https://docs.ethers.org/v5/concepts/events/#events--filters
+    // Should use this to filter only for confirmations of needed confirmers
+    const nPrevBlockId = chain.headBlockId;
+    const nPrevBlockNum = assertDefined(this._st.blockNums[nPrevBlockId]);
+    const nBlockFilter = contract.filters.BlockConfirmation(nPrevBlockId);
+    const events = await contract.queryFilter(nBlockFilter);
+    while (events.length > 0) {
+      for (const event of events) {
+        const bId = event.args.blockId
+        let block = this._st.blocks[bId];
+        if (block === undefined) {
+          const nProposalFilter = contract.filters.BlockProposed(nPrevBlockId);
+          const propEvents = await contract.queryFilter(nProposalFilter);
+          let blVal: BlockValue | undefined;
+          for (const ev of propEvents) {
+            const tx = await ev.getTransaction();            
+            const ptx = contract.interface.parseTransaction(tx);
+            const bl = assertDefined(ptx.args['bl']) as BlockValue;
+            const id = getBlockId(bl.header);
+            if (id === bId) {
+              blVal = bl;
+              break;
+            }
+          }
+
+          if (blVal === undefined) {
+            const nExecFilter = contract.filters.BlockExecuted(bId);
+            const execEvent = (await contract.queryFilter(nExecFilter))[0];
+            if (execEvent !== undefined) {
+              const tx = await execEvent.getTransaction();
+              const ptx = contract.interface.parseTransaction(tx);
+              blVal = assertDefined(ptx.args['bl']);
+            }
+          }
+
+          // if (blVal === undefined) {
+          //   block = {
+          //     header: {
+          //       prevBlockId: nPrevBlockId,
+          //       blockBodyId:
+
+          //     }
+
+              
+          //   }
+          // }
+
+        }
+
+      }
+    }
   }
 
   async getChain(address: Address): Promise<MountedEFChain | undefined> {
@@ -1040,14 +1090,17 @@ export class FirmCore implements IMountedFirmCore {
         return undefined;
       }
 
+      const isKnown = isKnownBlock(block);
+      const prevBlockId = isKnown ? block.header.prevBlockId : block.prevBlockId;
+
       return {
         id,
-        prevBlockId: ethers.utils.hexlify(block.header.prevBlockId),
+        prevBlockId: ethers.utils.hexlify(prevBlockId),
         height,
-        timestamp: BigNumber.from(block.header.timestamp).toNumber(),
+        timestamp: isKnown ? BigNumber.from(block.header.timestamp).toNumber() : undefined,
         msgs: messages, 
         state: {
-          confirmerSet: this._confirmerSetFromBlock(block),
+          confirmerSet: isKnown ? this._confirmerSetFromBlock(block) : undefined,
           confirmations: () => {
             return new Promise((resolve) => {
               const confs = this._st.confirmations[id];
@@ -1064,7 +1117,7 @@ export class FirmCore implements IMountedFirmCore {
               if (!confs) {
                 reject(new NotFound("Confirmation object not found"));
               } else {
-                if (block.header.prevBlockId === ZeroId) {
+                if (prevBlockId === ZeroId) {
                   // Means it's the first block
                   resolve({
                     currentWeight: 0,
@@ -1073,7 +1126,7 @@ export class FirmCore implements IMountedFirmCore {
                     final: true,
                   });
                 } else {
-                  const prevBlock = this._st.blocks[utils.hexlify(block.header.prevBlockId)];
+                  const prevBlock = assertKnownBlock(this._st.blocks[utils.hexlify(prevBlockId)]);
                   if (!prevBlock) {
                     reject(new ProgrammingError("Previous block not recorded"));
                   } else {
@@ -1183,7 +1236,7 @@ export class FirmCore implements IMountedFirmCore {
       ): Promise<UpdateConfirmersMsg> => {
         let confMap: ConfirmerMap;
         if (typeof prevBlock === 'string') {
-          const bl = this._st.blocks[prevBlock];          
+          const bl = assertKnownBlock(this._st.blocks[prevBlock]);
           if (!bl) {
             throw new InvalidArgument("No block with this id");
           }
@@ -1191,6 +1244,9 @@ export class FirmCore implements IMountedFirmCore {
           const confSet = this.convertFcConfirmerSet(bl.state.confirmerSet);
           confMap = confSet.confirmers;
         } else {
+          if (prevBlock.state.confirmerSet === undefined) {
+            throw new Error('ConfirmerSet set in the previous block has to be known to create updateConfirmersMsg');
+          }
           confMap = prevBlock.state.confirmerSet.confirmers;
         }
 
