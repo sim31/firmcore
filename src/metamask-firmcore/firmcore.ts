@@ -1,7 +1,7 @@
-import { Overwrite, Required } from 'utility-types';
-import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr, SignatureValue, toValue, XEdenPlusFractal, XEdenPlusFractal__factory, GenesisBlockValue, BlockValue, InitConfirmerSet, MessageValue } from "firmcontracts/interface/types.js";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await, IMountedFirmCore, ChainNetworkInfo, MountPointChangedCb, MountedEFChain, SyncState, newAccountWithAddress, newUknownMsg, newAccount, newCreateAccountMsg, newRemoveAccountMsg, newSetDirMsg, newUpdateAccountMsg, newEFSubmitResultsMsg, newEFBreakoutResults, EFBreakoutResults } from "../ifirmcore/index.js";
-import { BigNumber, BytesLike, ethers, utils } from "ethers";
+import { Optional, Overwrite, Required } from 'utility-types';
+import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr, SignatureValue, toValue, XEdenPlusFractal, XEdenPlusFractal__factory, GenesisBlockValue, BlockValue, InitConfirmerSet, MessageValue, BlockHeader, BlockHeaderValue } from "firmcontracts/interface/types.js";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await, IMountedFirmCore, ChainNetworkInfo, MountPointChangedCb, MountedEFChain, SyncState, newAccountWithAddress, newUknownMsg, newAccount, newCreateAccountMsg, newRemoveAccountMsg, newSetDirMsg, newUpdateAccountMsg, newEFSubmitResultsMsg, newEFBreakoutResults, EFBreakoutResults, newUpdateConfirmersMsg } from "../ifirmcore/index.js";
+import { BigNumber, BigNumberish, BytesLike, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain.js";
 import { FirmContractDeployer } from 'firmcontracts/interface/deployer.js';
 import { getBlockBodyId, getBlockDigest, getBlockId, normalizeHexStr, randomAddressHex, randomBytes32, randomBytes32Hex } from "firmcontracts/interface/abi.js";
@@ -21,6 +21,7 @@ import { CarFileInfo, FileOptions, MTime, anyToCAR, createCARFile, objectToCAR, 
 import stringify from 'json-stable-stringify-without-jsonify';
 import { FileCandidate } from 'ipfs-unixfs-importer';
 import { MetaMaskSDK } from '@metamask/sdk';
+import { ByzantineChain } from '../exceptions/ByzantineChain.js';
 
 interface Chain {
   contract: XEdenPlusFractal | Address,
@@ -39,10 +40,13 @@ function getAddress(c: XEdenPlusFractal | Address): Address {
   return isContract(c) ? c.address : c;
 }
 
-interface UnknownBlock {
-  blockId: BlockId,
-  prevBlockId: BlockId,
-}
+type UnknownBlock =
+  Pick<OptExtendedBlockValue, 'signatures' | 'signers' | 'contract' | 'header'>
+  & {
+    header: Optional<BlockHeaderValue, 'blockBodyId' | 'timestamp'>
+  }
+
+type ParsedBlock = OptExtendedBlockValue & { messages: EFMsg[] };
 
 function isKnownBlock(bl: UnknownBlock | OptExtendedBlockValue | undefined): bl is OptExtendedBlockValue {
   return bl !== undefined && 'header' in bl && 'confirmerSetId' in bl && 'msgs' in bl;
@@ -220,12 +224,12 @@ export class FirmCore implements IMountedFirmCore {
             if (msgs === undefined) {
               throw new InvalidArgument('Invalid car: messages for a block missing');
             }
-            const bl = await this._createBlock(
-              efChain.blockById,
+            const bl = assertDefined(await this._createBlock(
               utils.hexlify(prevBlockId),
               msgs,
+              efChain.blockById,
               block
-            );
+            ));
             if (bl.id !== getBlockId(block.header)) {
               throw new InvalidArgument('Invalid car: blocks id');
             }
@@ -521,13 +525,31 @@ export class FirmCore implements IMountedFirmCore {
     };
   }
 
+  private _convertConfOpValId(id: BigNumberish): ConfirmerOpId {
+    return id === 0 ? 'add' : 'remove';
+  }
+
+  private _convertConfirmerOpValue(op: ConfirmerOpValue): ConfirmerOp {
+    return {
+      opId: this._convertConfOpValId(op.opId),
+      confirmer: {
+        address: op.conf.addr,
+        weight: op.conf.weight
+      }
+    }
+  }
+
   isWallet(walletOrSig: Wallet | Confirmation): walletOrSig is Wallet {
     return (
       'sign' in walletOrSig && typeof walletOrSig.sign === 'function'
     );
   }
 
-  private async _confirm(blockId: BlockId, walletOrSig: Wallet | Confirmation): Promise<void> {
+  private async _confirm(
+    blockId: BlockId,
+    walletOrSig: Wallet | Confirmation,
+    virtual?: boolean
+  ): Promise<void> {
     const { provider } = this._getInitialized();
 
     const block = assertKnownBlock(this._st.blocks[blockId]);
@@ -554,26 +576,24 @@ export class FirmCore implements IMountedFirmCore {
       ? [await this._signBlock(walletOrSig, block), walletOrSig.getAddress()]
       : [walletOrSig.sig, walletOrSig.address]
 
-    // await provider.send('evm_mine', []);
+    if (!virtual) {
+      const rValue = await chain.contract.callStatic.extConfirm(
+        block.header,
+        address,
+        signature,
+      );
+      if (!rValue) {
+        throw new Error("Contract returned false");
+      }
 
-    const rValue = await chain.contract.callStatic.extConfirm(
-      block.header,
-      address,
-      signature,
-    );
-    if (!rValue) {
-      throw new Error("Contract returned false");
+      const tx = await chain.contract.extConfirm(
+        block.header,
+        address,
+        signature,
+      );
+      // Will throw if tx fails
+      await tx.wait()
     }
-
-    // await provider.send('evm_mine', []);
-
-    const tx = await chain.contract.extConfirm(
-      block.header,
-      address,
-      signature,
-    );
-    // Will throw if tx fails
-    await tx.wait()
 
     let bConfs = this._st.confirmations[blockId];
 
@@ -593,10 +613,11 @@ export class FirmCore implements IMountedFirmCore {
     const confirmStatus = prevBlock ? 
       this._confirmStatusFromBlock(prevBlock, confirmAddrs)
       : this._confirmStatusForGenesis();
-    if (confirmStatus.final) {
+    if (confirmStatus.final && !virtual) {
       // console.log("headBlock: ", await chain.contract.getHead());
       // console.log("getBlockId(block): ", getBlockId(block.header));
       // await provider.send('evm_mine', []);
+      chain.headBlockId = blockId;
       const tx = await chain.contract.finalizeAndExecute(block);
       await tx.wait();
       const head = await chain.contract.getHead();
@@ -604,13 +625,15 @@ export class FirmCore implements IMountedFirmCore {
       // console.log("headBlock2: ", await chain.contract.getHead());
       // console.log("head: ", head);
       // console.log("blockId: ", blockId);
-      chain.headBlockId = head;
       const ch = await this.getChain(chain.contract.address);
       assert(ch, "should be able to retrieve chain");
       const bl = await ch!.blockById(blockId);
       assert(bl, "should be able to retrieve EFBlock");
       this._st.states[blockId] = await getEFChainState(bl!);
     } else {
+      if (confirmStatus.final) {
+        chain.headBlockId = blockId;
+      }
       // Update confirmation state
       this._st.states[blockId] = {
         delegates: emptyDelegates,
@@ -656,43 +679,7 @@ export class FirmCore implements IMountedFirmCore {
     // await provider.send('evm_mine', []);
     const { contract, genesisBl } = await this._deployEFChain(implLib, accSystemLib, nargs, genesisBlock);
 
-    // const events = await contract.queryFilter(contract.filters.Construction());
-    // if (events.length !== 1) {
-    //   throw new NotFound('Construction event not found in the mounted chain');
-    // }
-
-    // // Get constructor args
-    // // TODO: move to deployer
-    // const event = events[0]!;
-    // const dtx = await event.getTransaction();
-
-    // const dtxLength = ethers.utils.hexDataLength(dtx.data);
-    // const argsLength = dtxLength - ethers.utils.hexDataLength(factory.bytecode);
-    // console.log('argsLength: ', argsLength, ', dtx.data.length: ', dtxLength);
-
-    // const argData = ethers.utils.hexDataSlice(dtx.data, dtxLength - argsLength);
-
-    // console.log('argData: ', argData);
-
-    // // ethers.utils.defaultAbiCoder.decode()
-    // // factory.interface.deploy.
-    // const a = ethers.utils.defaultAbiCoder.decode(factory.interface.deploy.inputs, argData);
-    // console.log("decoded args: ", a);
-    // const g = a['genesisBl'];
-
-    const bId = getBlockId(genesisBl.header);
-    this._st.blocks[bId] = genesisBl;
-    this._st.blockNums[bId] = 0;
-    const ordBlocks: BlockId[][] = [[bId]];
-    this._st.orderedBlocks[contract.address] = ordBlocks;
-    this._st.msgs[bId] = [];
-    this._st.confirmations[bId] = [];
-    this._st.chains[contract.address] = {
-      contract,
-      constructorArgs: args,
-      headBlockId: bId,
-      genesisBlId: bId,
-    };
+    const bId = this._storeNewFirmChain(genesisBl, contract, args);
 
     const chain = await this.getChain(contract.address);
     if (!chain) {
@@ -706,11 +693,11 @@ export class FirmCore implements IMountedFirmCore {
   }
 
   private async _createBlock(
-    blockById: EFChain['blockById'],
     prevBlockId: BlockId,
     messages: EFMsg[],
+    blockById?: EFChain['blockById'],
     bl?: OptExtendedBlockValue
-  ): Promise<EFBlock> {
+  ): Promise<EFBlock | undefined> {
     // TODO: Check if we have prevBlock
     const prevBlock = assertKnownBlock(this._st.blocks[prevBlockId]);
     const prevBlockNum = this._st.blockNums[prevBlockId];
@@ -821,11 +808,15 @@ export class FirmCore implements IMountedFirmCore {
     slot.push(bId);
 
     // Construct EFBlock version of the block just created
-    const efBlock = await blockById(bId);
-    if (!efBlock) {
-      throw new ProgrammingError("Unable to retrieve created block");
+    if (blockById !== undefined) {
+      const efBlock = await blockById(bId);
+      if (!efBlock) {
+        throw new ProgrammingError("Unable to retrieve created block");
+      }
+      return efBlock;
+    } else {
+      undefined;
     }
-    return efBlock;
   }
 
   private _decodeMsg(contract: XEdenPlusFractal, msg: MessageValue): EFMsg {
@@ -836,6 +827,12 @@ export class FirmCore implements IMountedFirmCore {
     const t = { data: ethers.utils.hexlify(msg.cdata) };
     const { args, name } = contract.interface.parseTransaction(t);
     switch (name) {
+      case 'updateConfirmerSet': {
+        const opValues = args['ops'] as ConfirmerOpValue[];
+        const ops = opValues.map(op => this._convertConfirmerOpValue(op));
+        const threshold = args['threshold']; 
+        return newUpdateConfirmersMsg(ops, threshold)
+      }
       case 'createAccount': {
         const addr = args['account']['addr'] === ZeroAddr ? undefined: args['addr'];
         const name = args['account']['name'];
@@ -865,7 +862,7 @@ export class FirmCore implements IMountedFirmCore {
         const account = newAccount({}, name, addr);
         return newUpdateAccountMsg(id, account);
       }
-      case 'efSubmitResults': {
+      case 'submitResults': {
         const resultsArr = args['newResults'];
         const rResults: EFBreakoutResults[] = []
         for (const res of resultsArr) {
@@ -883,14 +880,216 @@ export class FirmCore implements IMountedFirmCore {
     }
   }
 
+  // Functions to retrive stuff from mounted chain
+  private async _getProposedBlocksM(
+    contract: XEdenPlusFractal,
+    prevBlockId: BlockId,
+  ): Promise<BlockValue[]> {
+    const nProposalFilter = contract.filters.BlockProposed(prevBlockId);
+    const propEvents = await contract.queryFilter(nProposalFilter);
+    const bls: BlockValue[] = [];
+    for (const ev of propEvents) {
+      const tx = await ev.getTransaction();            
+      const ptx = contract.interface.parseTransaction(tx);
+      const b = assertDefined(ptx.args['bl']) as BlockValue;
+      bls.push(b);
+    }
+    return bls;
+  }
+
+  private async _getProposedBlockM(
+    contract: XEdenPlusFractal,
+    prevBlockId: BlockId,
+    expectedBlId: BlockId
+  ): Promise<BlockValue | undefined> {
+    const bls = await this._getProposedBlocksM(contract, prevBlockId);
+    for (const bl of bls) {
+      const id = getBlockId(bl.header);
+      if (id === expectedBlId) {
+        return bl;
+      }
+    }
+    return undefined;
+  }
+
+  private async _getExecutedBlock(
+    contract: XEdenPlusFractal,
+    blockId: BlockId
+  ): Promise<BlockValue | undefined> {
+    const nExecFilter = contract.filters.BlockExecuted(blockId);
+    const execEvent = (await contract.queryFilter(nExecFilter))[0];
+    if (execEvent !== undefined) {
+      const tx = await execEvent.getTransaction();
+      const ptx = contract.interface.parseTransaction(tx);
+      return assertDefined(ptx.args['bl']);
+    }
+    return undefined;
+  }
+
+  private async _getConfirmationsOnBlock(
+    contract: XEdenPlusFractal,
+    blockId: BlockId
+  ): Promise<Confirmation[]> {
+    const confirmFilter = contract.filters.BlockConfirmation(null, blockId);
+    const events = await contract.queryFilter(confirmFilter);
+    const confirms: Confirmation[] = [];
+    for (const ev of events) {
+      const tx = await ev.getTransaction();
+      const ptx = contract.interface.parseTransaction(tx);
+      const signatory = assertDefined(ptx.args['signatory']);
+      const sig = assertDefined(ptx.args['sig']);
+      confirms.push({ address: signatory, sig });
+    }
+    return confirms;
+  }
+
+  private async _getNexFinalizedBlockHead(
+    contract: XEdenPlusFractal,
+    prevBlockId: BlockId
+  ): Promise<BlockHeaderValue | undefined> {
+    const nPrevBlockNum = assertDefined(this._st.blockNums[prevBlockId]);
+    const nFinalBlockFilter = contract.filters.BlockFinalized(prevBlockId);
+    const events = await contract.queryFilter(nFinalBlockFilter);
+    if (events.length > 1) {
+      throw new ByzantineChain('Two finalized events extending the same block');
+    } else if (events.length === 0) {
+      return undefined;
+    }
+
+    const event = events[0]!;
+    const tx = await event.getTransaction();
+    const ptx = contract.interface.parseTransaction(tx);
+    const header = assertDefined(ptx.args['header']) as BlockHeaderValue;
+
+    return header;
+  }
+
+  /**
+   * Throws on error
+   */
+  private _storeNewFirmChain(
+    genesisBl: OptExtendedBlockValue,
+    contract: XEdenPlusFractal,
+    cargs: EFConstructorArgs,
+    messages?: EFMsg[]
+  ): BlockId {
+    const bId = getBlockId(genesisBl.header);
+    this._st.blocks[bId] = genesisBl;
+    this._st.blockNums[bId] = 0;
+    const ordBlocks: BlockId[][] = [[bId]];
+    this._st.orderedBlocks[contract.address] = ordBlocks;
+    this._st.msgs[bId] = messages !== undefined ? messages : [];
+    this._st.confirmations[bId] = [];
+    this._st.chains[contract.address] = {
+      contract,
+      constructorArgs: cargs,
+      headBlockId: bId,
+      genesisBlId: bId,
+    };
+    return bId;
+  }
+
+  /**
+   * Initialized firmchain in the local state based on logs found on the mounted chain (produced by constructor of firmchain smart contract).
+   */
+  private async _initFChainFromMounted(contract: XEdenPlusFractal): Promise<void> {
+    const { factory } = this._getInitialized();
+
+    const events = await contract.queryFilter(contract.filters.Construction());
+    if (events.length !== 1) {
+      throw new NotFound('Construction event not found in the mounted chain');
+    }
+    // Get constructor args
+    // TODO: move to deployer
+    const event = events[0]!;
+    const dtx = await event.getTransaction();
+
+    const dtxLength = ethers.utils.hexDataLength(dtx.data);
+    const argsLength = dtxLength - ethers.utils.hexDataLength(factory.bytecode);
+    console.log('argsLength: ', argsLength, ', dtx.data.length: ', dtxLength);
+
+    const argData = ethers.utils.hexDataSlice(dtx.data, dtxLength - argsLength);
+
+    console.log('argData: ', argData);
+
+    // ethers.utils.defaultAbiCoder.decode()
+    // factory.interface.deploy.
+    const args = ethers.utils.defaultAbiCoder.decode(factory.interface.deploy.inputs, argData);
+    console.log("decoded args: ", args);
+
+    const genesisBl = args['genesisBl'] as BlockValue;
+    const gbId = getBlockId(genesisBl.header);
+    const confirmers = args['confirmers'] as AccountValue[];
+    const confOps = confirmers.map(conf => {
+      return createAddConfirmerOp(conf.addr, 1);
+    });
+    const threshold = args['threshold'] as number;
+    const confSet = updatedConfirmerSet(InitConfirmerSet, confOps, threshold);
+    const genesisBlExt: GenesisBlockValue = {
+      ...genesisBl,
+      state: {
+        blockId: gbId,
+        blockNum: 0,
+        confirmerSet: confSet
+      }
+    }
+    const name = args['name'] as string;
+    const symbol = args['symbol'] as string;
+    const messages = genesisBl.msgs.map(msg => this._decodeMsg(contract, msg));
+    const accConfirmers = confirmers.map(c => newAccountWithAddress({}, c.addr, c.name));
+    const cargs: EFConstructorArgs = {
+      confirmers: accConfirmers,
+      name, symbol
+    };
+
+    this._storeNewFirmChain(genesisBlExt, contract, cargs, messages);
+  }
+
+  private _parseBlockValue(
+    block: BlockValue,
+    prevBlock: OptExtendedBlockValue,
+    contract: XEdenPlusFractal
+  ): ParsedBlock {
+    const messages = block.msgs.map(msg => this._decodeMsg(contract, msg));
+    const confOpMsg = (messages.filter(m => m.name === 'updateConfirmers'))[0] as UpdateConfirmersMsg;
+    const confirmerOps = confOpMsg.ops.map(op => this._convertConfirmerOp(op));
+    const newThreshold = confOpMsg.threshold;
+    const confSet = updatedConfirmerSet(prevBlock.state.confirmerSet, confirmerOps, newThreshold);
+    const bId = getBlockId(block.header);
+    const b: ParsedBlock = {
+    ...block,
+      state: {
+        blockId: bId,
+        blockNum: prevBlock.state.blockNum,
+        confirmerSet: confSet
+      },
+      messages,
+    }
+    return b;
+  }
+
+  private async _syncChainProposals(contract: XEdenPlusFractal): Promise<void> {
+    const ch = assertDefined(this._st.chains[contract.address]);
+    const headBlId = ch.headBlockId;
+    // Head block should be known block because it is executed if it is head (and if it is executed, execute event was called, which enables us to learn the full block from transaction)
+    const headBl = assertKnownBlock(this._st.blocks[headBlId]);
+    const blockValues = await this._getProposedBlocksM(contract, headBlId);
+    for (const val of blockValues) {
+      const block = this._parseBlockValue(
+        val, headBl, contract
+      );
+      await this._createBlock(headBlId, block.messages, undefined, block);
+      await this._collectConfirmationsFromMounted(contract, block.state.blockId);
+    }
+  }
+
   private async _syncChainFc(address: Address): Promise<SyncState> {
     const { factory, deployer } = this._getInitialized();
-
-    // TODO: subscribe to events to update firmcore from EVM
 
     const existingChain = this._st.chains[address];
     let contract: XEdenPlusFractal;
 
+    // Initialize contract instance which we will use to interact with firmchain on the mounted chain
     if (existingChain === undefined) {
       if (await deployer.contractExists(address)) {
         contract = factory.attach(address);        
@@ -902,16 +1101,55 @@ export class FirmCore implements IMountedFirmCore {
         contract = factory.attach(address);        
         existingChain.contract = contract;
       } else {
+        // Case when firmchain is not deployed to the mounted chain
         return { status: 'behind', insyncBlocks: 0 }
       }
     } else {
       contract = existingChain.contract;
     }
 
+    // Sync up to head, then sync proposed blocks.
+    const syncState: SyncState = await this._syncChainHeadFc(contract);
+    await this._syncChainProposals(contract);
+
+    // After syncing proposed blocks we might change the status
+    // of some of them to finalized. This would make the mounted chain
+    // be behind as far as sync state. So we need to adjust syncState after
+    // syncing proposed blocks;
+    // Note that the only thing missing in the mounted chain for it to be insync
+    // might be a call to `finalizeAndExecute` or just `execute`.
+    const chain = assertDefined(this._st.chains[address]);
+    const headBlNum = assertDefined(this._st.blockNums[chain.headBlockId]);
+    if (syncState.insyncBlocks < headBlNum) {
+      return { ...syncState, status: 'behind' }
+    } else {
+      return syncState;
+    }
+  }
+
+  private async _collectConfirmationsFromMounted(
+    contract: XEdenPlusFractal, onBlockId: BlockId
+  ): Promise<void> {
+    // Collect confirmations for this block
+    const confirmations = await this._getConfirmationsOnBlock(contract, onBlockId);
+    for (const confirm of confirmations) {
+      await this._confirm(onBlockId, confirm, true);
+    }
+  }
+
+  /**
+   * Syncs up to chain head (not including proposed but not executed blocks).
+   * If local state of firmchain is ahead, it returns the appropriate SyncState
+   * It also initialized record of specified firmchain in the firmcore state,
+   * in case it is not present there yet.
+   */
+  private async _syncChainHeadFc(contract: XEdenPlusFractal): Promise<SyncState> {
+    const existingChain = this._st.chains[contract.address];
     const headBlId = await contract.getHead();
     const blockNum = this._st.blockNums[headBlId];
     if (existingChain !== undefined && headBlId === existingChain.headBlockId) {
-      // Case when chain exists in firmcore state and head block matches in the mounted chain (this means that firmchains are insync)
+      // Case when firmchain exists in firmcore state and head block matches in the mounted chain (this means that firmchains are insync).
+      // We might still be missing some proposed blocks, but it is not up to this function to solve this
       if (blockNum === undefined) {
         throw new ProgrammingError('block num not stored');
       }
@@ -920,6 +1158,7 @@ export class FirmCore implements IMountedFirmCore {
         insyncBlocks: blockNum,
       }
     } else if (existingChain !== undefined) {
+      // Case when firmchain exists in firmcore state, but it's head (latest block) does not match head in the mounted chain;
       const exHeadId = existingChain.headBlockId;
       const exBlockNum = this._st.blockNums[exHeadId];
       if (exBlockNum === undefined) {
@@ -938,143 +1177,78 @@ export class FirmCore implements IMountedFirmCore {
       } else if (blockNum !== undefined && blockNum === exBlockNum) {
         throw new ProgrammingError('Fork: head block does not match, but blockNum the same');
       }
-      // Case when the local firmcore is missing some confirmations needed to finalize
-      // Case when we (local firmcore) are behind (not even aware of some blocks)
+      // Remaining cases (resolved below):
+      //  * Case when the local firmcore is missing some confirmations needed to finalize
+      //  * Case when we (local firmcore) are behind (not even aware of some blocks)
     } else {
       // Case when we don't even have this firmchain locally
-      // - [ ] retrieve info from the deployment transaction, initialize existingChain
-
-      // Get constructor args
-      // TODO: refactor - move to deployer or somewhere else
-      const events = await contract.queryFilter(contract.filters.Construction());
-      if (events.length !== 1) {
-        throw new NotFound('Construction event not found in the mounted chain');
-      }
-      // Get constructor args
-      // TODO: move to deployer
-      const event = events[0]!;
-      const dtx = await event.getTransaction();
-
-      const dtxLength = ethers.utils.hexDataLength(dtx.data);
-      const argsLength = dtxLength - ethers.utils.hexDataLength(factory.bytecode);
-      console.log('argsLength: ', argsLength, ', dtx.data.length: ', dtxLength);
-
-      const argData = ethers.utils.hexDataSlice(dtx.data, dtxLength - argsLength);
-
-      console.log('argData: ', argData);
-
-      // ethers.utils.defaultAbiCoder.decode()
-      // factory.interface.deploy.
-      const args = ethers.utils.defaultAbiCoder.decode(factory.interface.deploy.inputs, argData);
-      console.log("decoded args: ", args);
-
-      const genesisBl = args['genesisBl'] as BlockValue;
-      const gbId = getBlockId(genesisBl.header);
-      const confirmers = args['confirmers'] as AccountValue[];
-      const confOps = confirmers.map(conf => {
-        return createAddConfirmerOp(conf.addr, 1);
-      });
-      const threshold = args['threshold'] as number;
-      const confSet = updatedConfirmerSet(InitConfirmerSet, confOps, threshold);
-      const genesisBlExt: GenesisBlockValue = {
-        ...genesisBl,
-        state: {
-          blockId: gbId,
-          blockNum: 0,
-          confirmerSet: confSet
-        }
-      }
-      this._st.blocks[gbId] = genesisBlExt;
-      this._st.blockNums[gbId] = 0;
-      const ordBlocks: BlockId[][] = [[gbId]];
-      this._st.orderedBlocks[address] = ordBlocks;
-      // TODO: decode known messages (the ones that go to self)
-      this._st.msgs[gbId] = genesisBl.msgs.map(msg => this._decodeMsg(contract, msg));
-      this._st.confirmations[gbId] = [];
-      const accConfirmers = confirmers.map(c => newAccountWithAddress({}, c.addr, c.name));
-      const name = args['name'] as string;
-      const symbol = args['symbol'] as string;
-      this._st.chains[contract.address] = {
-        contract,
-        headBlockId: gbId,
-        genesisBlId: gbId,
-        constructorArgs: {
-          confirmers: accConfirmers,
-          name,
-          symbol
-        }
-      }
-
+      // We retrieve info from the deployment transaction, initialize existingChain
+      await this._initFChainFromMounted(contract);
     }
     // TODO: should verify the blocks we are syncing with (the whole chain in local firmcore should be verified fully)
     //   - This will be done once we get proper EVM implementation in the browser
-    // TODO: Look for events on the previous block
     //   - So for now every mounted chain is trusted
 
-    // - [ ] Get block (from the mounted chain) that extends local current head block 
-    //   - [ ] Get confirmations and execution events on that block
-    //   - [ ] Repeat for the next block until we come to the head block in the mounted chain
-
-    const ch = this._st.chains[address];
-    const chain = assertDefined(ch, `${address} chain should have been initialized in the state`);
+    const ch = this._st.chains[contract.address];
+    const chain = assertDefined(ch, `${contract.address} chain should have been initialized in the state`);
 
     // TODO: It sounds like it is possible to filter for an array of event parameters: https://docs.ethers.org/v5/concepts/events/#events--filters
     // Should use this to filter only for confirmations of needed confirmers
-    const nPrevBlockId = chain.headBlockId;
-    const nPrevBlockNum = assertDefined(this._st.blockNums[nPrevBlockId]);
-    const nBlockFilter = contract.filters.BlockConfirmation(nPrevBlockId);
-    const events = await contract.queryFilter(nBlockFilter);
-    while (events.length > 0) {
-      for (const event of events) {
-        const bId = event.args.blockId
-        let block = this._st.blocks[bId];
-        if (block === undefined) {
-          const nProposalFilter = contract.filters.BlockProposed(nPrevBlockId);
-          const propEvents = await contract.queryFilter(nProposalFilter);
-          let blVal: BlockValue | undefined;
-          for (const ev of propEvents) {
-            const tx = await ev.getTransaction();            
-            const ptx = contract.interface.parseTransaction(tx);
-            const bl = assertDefined(ptx.args['bl']) as BlockValue;
-            const id = getBlockId(bl.header);
-            if (id === bId) {
-              blVal = bl;
-              break;
-            }
-          }
 
-          if (blVal === undefined) {
-            const nExecFilter = contract.filters.BlockExecuted(bId);
-            const execEvent = (await contract.queryFilter(nExecFilter))[0];
-            if (execEvent !== undefined) {
-              const tx = await execEvent.getTransaction();
-              const ptx = contract.interface.parseTransaction(tx);
-              blVal = assertDefined(ptx.args['bl']);
-            }
-          }
+    // Do this until chain.headBlockId matches headBlockId in the mounted chain 
+    //  * Filter on BlockFinalized(chain.headBlockId);
+    //  * Try getting Proposal or Execution event for that block to retrieve the actual block;
+    //  * Collect confirmation events for that block;
+    // Then collect BlockConfirmations, BlockFinalization, and BlockProposed events on the blocks after head block, store them;
+    let lastBlockNum: number;
+    do {
+      const nPrevBlockId = chain.headBlockId;
+      const nPrevBlockNum = assertDefined(this._st.blockNums[nPrevBlockId]);
 
-          // if (blVal === undefined) {
-          //   block = {
-          //     header: {
-          //       prevBlockId: nPrevBlockId,
-          //       blockBodyId:
+      const header = assertDefined(await this._getNexFinalizedBlockHead(contract, nPrevBlockId));
+      const bId = getBlockId(header);
 
-          //     }
-
-              
-          //   }
-          // }
-
-        }
-
+      const prevBlock = this._st.blocks[nPrevBlockId];
+      if (!isKnownBlock(prevBlock)) {
+        throw new Error('Expected previous block to be known, because the next is finalized');
       }
-    }
+
+      // Try to get the full block
+      let bl = await this._getExecutedBlock(contract, bId);
+      if (bl === undefined) {
+        bl = await this._getProposedBlockM(contract, nPrevBlockId, bId);
+      }
+
+      // We know that we haven't reached the head yet.
+      // So every block up to this point should have execute event triggered,
+      // and therefore we should be able to retrieve full blocks
+      // (block only becomes head block, once it is executed)
+      if (bl === undefined) {
+        throw new Error('When syncing up to head all blocks should be present (executed event should be signaled for all of them)');
+      }
+
+      // We know that if this block is finalized then previous block is executed.
+      // Therefore, the previous confirmer set should be known.
+      // FIXME: repetition
+      const block = this._parseBlockValue(
+        bl, prevBlock, contract
+      );
+
+      await this._createBlock(nPrevBlockId, block.messages, undefined, block);
+
+      lastBlockNum = block.state.blockNum;
+
+      // Collect confirmations for this block
+      await this._collectConfirmationsFromMounted(contract, bId);
+    } while (chain.headBlockId !== headBlId)
+
+    return { status: 'insync', insyncBlocks: lastBlockNum };
   }
 
   async getChain(address: Address): Promise<MountedEFChain | undefined> {
     // this._getInitialized();
 
-    // const syncState = this._syncChainFc(address);
+    const syncState = this._syncChainFc(address);
 
     const chain = this._st.chains[address];
     if (!chain) {
@@ -1086,12 +1260,12 @@ export class FirmCore implements IMountedFirmCore {
       const height = this._st.blockNums[id];
       const messages = this._st.msgs[id];
       // console.log("blockById 1: ", block, "\n", height, "\n", messages);
-      if (!block || height === undefined || !messages) {
+      if (!block || height === undefined) {
         return undefined;
       }
 
       const isKnown = isKnownBlock(block);
-      const prevBlockId = isKnown ? block.header.prevBlockId : block.prevBlockId;
+      const prevBlockId = isKnown ? block.header.prevBlockId : block.header.prevBlockId;
 
       return {
         id,
@@ -1260,7 +1434,8 @@ export class FirmCore implements IMountedFirmCore {
       },
 
       createBlock: async (prevBlockId: BlockId, messages: EFMsg[]): Promise<EFBlock> => {
-        return this._createBlock(blockById, prevBlockId, messages);
+        const bl = assertDefined(await this._createBlock(prevBlockId, messages, blockById));
+        return bl;
       }
     }
 

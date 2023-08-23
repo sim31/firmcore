@@ -237,6 +237,12 @@ export interface UpdateConfirmersMsg extends Msg {
   ops: ConfirmerOp[];
   threshold: number;
 }
+export function newUpdateConfirmersMsg(
+  ops: ConfirmerOp[],
+  threshold: number
+): UpdateConfirmersMsg {
+  return { name: 'updateConfirmers', ops, threshold };
+}
 
 export interface CreateAccountMsg extends Msg {
   readonly name: 'createAccount';
@@ -594,6 +600,7 @@ export interface SyncState {
   insyncBlocks: number,
 }
 
+// TODO: events for when new blocks are proposed / confirmed
 export interface MountedEFChain extends EFChain {
   getSyncState(): SyncState;
 }
