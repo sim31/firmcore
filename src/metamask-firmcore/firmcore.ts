@@ -1,6 +1,6 @@
 import { Optional, Overwrite, Required } from 'utility-types';
 import { AccountSystemImpl, AccountSystemImpl__factory, AccountValue, BlockIdStr, ConfirmerOpValue, EdenPlusFractal, EdenPlusFractal__factory, FirmChain, FirmChainAbi, FirmChainAbi__factory, FirmChainImpl, FirmChainImpl__factory, GenesisBlock, IPFSLink, Message, OptExtendedBlock, OptExtendedBlockValue, ZeroId, BreakoutResults, Signature, AddressStr, SignatureValue, toValue, XEdenPlusFractal, XEdenPlusFractal__factory, GenesisBlockValue, BlockValue, InitConfirmerSet, MessageValue, BlockHeader, BlockHeaderValue } from "firmcontracts/interface/types.js";
-import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await, IMountedFirmCore, ChainNetworkInfo, MountPointChangedCb, MountedEFChain, SyncState, newAccountWithAddress, newUknownMsg, newAccount, newCreateAccountMsg, newRemoveAccountMsg, newSetDirMsg, newUpdateAccountMsg, newEFSubmitResultsMsg, newEFBreakoutResults, EFBreakoutResults, newUpdateConfirmersMsg, MNormEFChainPOD, SyncOptions, ChainId } from "../ifirmcore/index.js";
+import { IFirmCore, EFChain, EFConstructorArgs, Address, Account, BlockId, EFBlock, EFMsg, AccountId, ConfirmerSet, ConfirmerMap, EFBlockBuilder, BlockConfirmer, ConfirmerOpId, ConfirmerOp, ConfirmationStatus, toEFChainPODSlice, UpdateConfirmersMsg, AccountWithAddress, Confirmer, EFBlockPOD, EFChainState, getEFChainState, EFChainPODSlice, toEFBlockPOD, emptyDelegates, toValidSlots, ValidEFChainPOD, ValidSlots, NormEFChainPOD, normalizeSlots, NormalizedSlots, Await, IMountedFirmCore, ChainNetworkInfo, MountPointChangedCb, MountedEFChain, SyncState, newAccountWithAddress, newUknownMsg, newAccount, newCreateAccountMsg, newRemoveAccountMsg, newSetDirMsg, newUpdateAccountMsg, newEFSubmitResultsMsg, newEFBreakoutResults, EFBreakoutResults, newUpdateConfirmersMsg, MNormEFChainPOD, SyncOptions, ChainId, newSetHostChainMsg, SetHostChainMsg } from "../ifirmcore/index.js";
 import { BigNumber, BigNumberish, BytesLike, ethers, utils } from "ethers";
 import { createAddConfirmerOp, createGenesisBlockVal, createMsg, createUnsignedBlock, createUnsignedBlockVal, updatedConfirmerSet, } from "firmcontracts/interface/firmchain.js";
 import { FirmContractDeployer } from 'firmcontracts/interface/deployer.js';
@@ -484,6 +484,20 @@ export class FirmCore implements IMountedFirmCore {
     };
   }
 
+  private _hostChainFromBlock(
+    prevBlock: BlockId | OptExtendedBlockValue,
+    messages: EFMsg[]
+  ): ChainId {
+    const prevBlockId = typeof prevBlock === 'string' ? prevBlock : getBlockId(prevBlock.header);
+    const msg = messages.find(m => m.name === 'setHostChain') as SetHostChainMsg;
+    if (msg === undefined) {
+      const prevState = assertDefined(this._st.states[prevBlockId]);
+      return prevState.hostChainId;
+    } else {
+      return msg.hostId;
+    }
+  }
+
   private _confirmStatusFromBlock(prevBlock: OptExtendedBlockValue, confirms: Address[]): ConfirmationStatus {
     const blSet = prevBlock.state.confirmerSet;
     let weight = 0;
@@ -648,6 +662,7 @@ export class FirmCore implements IMountedFirmCore {
       if (confirmStatus.final) {
         chain.headBlockId = blockId;
       }
+      const messages = assertDefined(this._st.msgs[block.state.blockId]);
       // Update confirmation state
       this._st.states[blockId] = {
         delegates: emptyDelegates,
@@ -655,6 +670,7 @@ export class FirmCore implements IMountedFirmCore {
         confirmations: confirmAddrs,
         confirmationStatus: confirmStatus,
         confirmerSet: this._confirmerSetFromBlock(block),
+        hostChainId: this._hostChainFromBlock(prevBlock, messages),
         allAccounts: false,
       }
     }
@@ -680,7 +696,7 @@ export class FirmCore implements IMountedFirmCore {
     };
   }
 
-  async createEFChain(args: EFConstructorArgs, genesisBlock?: OptExtendedBlockValue): Promise<EFChain> {
+  async createEFChain(args: EFConstructorArgs, genesisBlock?: OptExtendedBlockValue): Promise<MountedEFChain> {
     const { provider, implLib, accSystemLib, factory } = this._getInitialized();
     
     let nargs: Required<EFConstructorArgs, 'threshold' | 'hostChainId'>;
@@ -795,6 +811,10 @@ export class FirmCore implements IMountedFirmCore {
           serializedMsgs.push(
             createMsg(chain.contract, 'submitResults', [efResults])
           );
+        } else if (msg.name === 'setHostChain') {
+          serializedMsgs.push(
+            createMsg(chain.contract, 'setHostChain', [msg.hostId])
+          );
         }
       }
     }
@@ -820,11 +840,13 @@ export class FirmCore implements IMountedFirmCore {
     this._st.confirmations[bId] = [];
     const confSet = this._confirmerSetFromBlock(block);
     const confirmStatus = this._confirmStatusFromBlock(prevBlock, []);
+    const hostId = this._hostChainFromBlock(prevBlockId, messages);
     this._st.states[bId] = {
       delegates: emptyDelegates,
       directoryId: ZeroId,
       confirmations: [],
       confirmationStatus: confirmStatus,
+      hostChainId: hostId,
       confirmerSet: confSet,
       allAccounts: false,
     }
@@ -901,6 +923,10 @@ export class FirmCore implements IMountedFirmCore {
           rResults.push(newEFBreakoutResults(delegate, ...ranks));
         }
         return newEFSubmitResultsMsg(rResults);
+      }
+      case 'setHostChain': {
+        const hostId = assertDefined(args['hostId']);
+        return newSetHostChainMsg(hostId);
       }
       default: {
         throw new OpNotSupprtedError('Unrecognized message');

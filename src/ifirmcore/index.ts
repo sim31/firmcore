@@ -57,8 +57,8 @@ export interface ConfirmationStatus {
 export interface ChainState {
   confirmerSet?: ConfirmerSet; // This defines requirements for confirming the next block
   confirmations: Address[];   // These are confirmations of this block
-  confirmationStatus?: ConfirmationStatus; // This is confirmation status of this block
-  hostChainId?: ChainId;
+  hostChainId: ChainId;
+  confirmationStatus: ConfirmationStatus; // This is confirmation status of this block
 }
 
 export interface ChainAccessor {
@@ -180,6 +180,7 @@ export const msgTypeNames = [
   'createAccount',
   'removeAccount',
   'updateAccount',
+  'setHostChain',
   'unknown'
 ] as const;
 export type MsgTypeName = typeof msgTypeNames[number];
@@ -272,9 +273,18 @@ export function newUpdateAccountMsg(accountId: AccountId, newAccount: Account): 
 
 }
 
+export interface SetHostChainMsg extends Msg {
+  readonly name: 'setHostChain';
+  hostId: ChainId;
+}
+export function newSetHostChainMsg(hostId: ChainId): SetHostChainMsg {
+  return { name: 'setHostChain', hostId };
+}
+
 export type EFMsg =
   CreateAccountMsg | RemoveAccountMsg | UpdateAccountMsg | 
-  UpdateConfirmersMsg | SetDirMsg | EFSubmitResultsMsg | UnknownMsg
+  UpdateConfirmersMsg | SetDirMsg | EFSubmitResultsMsg | SetHostChainMsg |
+  UnknownMsg
 
 export interface EFBlock {
   id: BlockId;
@@ -523,6 +533,7 @@ export async function getEFChainState(block: EFBlock): Promise<EFChainState> {
     accountByAddress: allAccounts?.accountByAddress,
     accountById: allAccounts?.accountById,
     confirmerSet: block.state.confirmerSet,
+    hostChainId: await block.state.hostChainId(),
     confirmations: await block.state.confirmations(),
     confirmationStatus: await block.state.confirmationStatus(),
     directoryId: await block.state.directoryId(),
@@ -635,6 +646,7 @@ export interface IMountedFirmCore extends IFirmCore {
   onMountPointChanged(cb: MountPointChangedCb): void;
 
   getChain(address: Address): Promise<MountedEFChain | undefined>;
+  createEFChain(args: EFConstructorArgs): Promise<MountedEFChain>;
 }
 
 
