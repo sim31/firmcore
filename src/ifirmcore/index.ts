@@ -58,12 +58,14 @@ export interface ChainState {
   confirmerSet?: ConfirmerSet; // This defines requirements for confirming the next block
   confirmations: Address[];   // These are confirmations of this block
   confirmationStatus?: ConfirmationStatus; // This is confirmation status of this block
+  hostChainId?: ChainId;
 }
 
 export interface ChainAccessor {
   confirmerSet?: ConfirmerSet;
   confirmations: () => Promise<Address[]>;
   confirmationStatus: () => Promise<ConfirmationStatus>;
+  hostChainId: () => Promise<ChainId>;
 }
 
 export interface RespectChain extends Chain {
@@ -315,6 +317,7 @@ export interface EFConstructorArgs {
   confirmers: AccountWithAddress[];
   name: string;
   symbol: string;
+  hostChainId?: number;
   threshold?: number;
 }
 
@@ -322,9 +325,10 @@ export function newEFConstructorArgs(
   confirmers: AccountWithAddress[],
   name: string,
   symbol: string,
+  hostChainId?: number,
   threshold?: number,
 ): EFConstructorArgs {
-  return { confirmers, name, symbol, threshold };
+  return { confirmers, name, symbol, hostChainId, threshold };
 }
 
 export type BlockSlot<BlockType> = BlockType[];
@@ -582,9 +586,10 @@ export interface Device {
   status: 'connected' | 'disconnected'
 }
 
+export type ChainId = number;
 export interface ChainNetworkInfo extends Device {
   name: string,
-  chainId: number,
+  chainId: ChainId,
   api?: string,
 }
 
@@ -600,9 +605,17 @@ export interface SyncState {
   insyncBlocks: number,
 }
 
+export interface SyncOptions {
+  nonConfirmerConfirmations?: boolean
+}
+
 // TODO: events for when new blocks are proposed / confirmed
 export interface MountedEFChain extends EFChain {
   getSyncState(): SyncState;
+
+  sync(blockId: BlockId, options?: SyncOptions): Promise<SyncState>;
+
+  getNormPODChain(start?: number, end?: number): Promise<MNormEFChainPOD>;
 }
 
 export interface MEFChainPODSlice extends EFChainPODSlice {

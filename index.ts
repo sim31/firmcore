@@ -2,6 +2,7 @@ import { IMountedFirmCore } from './src/ifirmcore/index.js';
 import { FirmCore } from './src/metamask-firmcore/firmcore.js';
 
 const _firmcore = new FirmCore();
+(globalThis as any).firmcore = _firmcore;
 
 export * from './src/ifirmcore/index.js';
 
