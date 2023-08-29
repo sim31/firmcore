@@ -296,6 +296,18 @@ export class FirmCore implements IMountedFirmCore {
     }
   }
 
+  async mountChain(chainId: ChainId): Promise<void> {
+    await this._getInitialized();
+    await window.ethereum?.request({
+      "method": "wallet_switchEthereumChain",
+      "params": [
+        {
+          "chainId": ethers.utils.hexValue(chainId)
+        }
+      ]
+    });
+  }
+
   onMountPointChanged(cb: MountPointChangedCb): void {
     this._mpChangedCb = cb;
   }

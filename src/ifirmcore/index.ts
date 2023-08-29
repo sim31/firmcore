@@ -643,6 +643,7 @@ export type MNormEFChainPOD = Overwrite<MEFChainPODSlice, {
 
 export interface IMountedFirmCore extends IFirmCore {
   getMountPoint(): MountPoint;
+  mountChain(chainId: number): Promise<void>;
   onMountPointChanged(cb: MountPointChangedCb): void;
 
   getChain(address: Address): Promise<MountedEFChain | undefined>;
