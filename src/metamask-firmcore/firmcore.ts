@@ -1056,7 +1056,7 @@ export class FirmCore implements IMountedFirmCore {
     return confirms;
   }
 
-  private async _getNexFinalizedBlockHead(
+  private async _getNextFinalizedBlockHead(
     contract: XEdenPlusFractal,
     prevBlockId: BlockId
   ): Promise<BlockHeaderValue | undefined> {
@@ -1072,7 +1072,7 @@ export class FirmCore implements IMountedFirmCore {
     const event = events[0]!;
     const tx = await event.getTransaction();
     const ptx = contract.interface.parseTransaction(tx);
-    const header = assertDefined(ptx.args['header']) as BlockHeaderValue;
+    const header = assertDefined(ptx.args['bl']['header']) as BlockHeaderValue;
 
     return header;
   }
@@ -1130,13 +1130,13 @@ export class FirmCore implements IMountedFirmCore {
     const args = ethers.utils.defaultAbiCoder.decode(factory.interface.deploy.inputs, argData);
     console.log("decoded args: ", args);
 
-    const genesisBl = args['genesisBl'] as BlockValue;
+    const genesisBl = assertDefined(args['genesisBl']) as BlockValue;
     const gbId = getBlockId(genesisBl.header);
-    const confirmers = args['confirmers'] as AccountValue[];
+    const confirmers = assertDefined(args['confirmers']) as AccountValue[];
     const confOps = confirmers.map(conf => {
       return createAddConfirmerOp(conf.addr, 1);
     });
-    const threshold = args['threshold'] as number;
+    const threshold = assertDefined(args['threshold']) as number;
     const confSet = updatedConfirmerSet(InitConfirmerSet, confOps, threshold);
     const genesisBlExt: GenesisBlockValue = {
       ...genesisBl,
@@ -1146,8 +1146,8 @@ export class FirmCore implements IMountedFirmCore {
         confirmerSet: confSet
       }
     }
-    const name = args['name'] as string;
-    const symbol = args['symbol'] as string;
+    const name = assertDefined(args['name_']) as string;
+    const symbol = assertDefined(args['symbol_']) as string;
     const messages = genesisBl.msgs.map(msg => this._decodeMsg(contract, msg));
     const accConfirmers = confirmers.map(c => newAccountWithAddress({}, c.addr, c.name));
     const cargs: EFConstructorArgs = {
@@ -1322,12 +1322,12 @@ export class FirmCore implements IMountedFirmCore {
     //  * Try getting Proposal or Execution event for that block to retrieve the actual block;
     //  * Collect confirmation events for that block;
     // Then collect BlockConfirmations, BlockFinalization, and BlockProposed events on the blocks after head block, store them;
-    let lastBlockNum: number;
-    do {
+    let lastBlockNum: number = assertDefined(this._st.blockNums[chain.headBlockId]);
+    while (chain.headBlockId !== headBlId) {
       const nPrevBlockId = chain.headBlockId;
       const nPrevBlockNum = assertDefined(this._st.blockNums[nPrevBlockId]);
 
-      const header = assertDefined(await this._getNexFinalizedBlockHead(contract, nPrevBlockId));
+      const header = assertDefined(await this._getNextFinalizedBlockHead(contract, nPrevBlockId));
       const bId = getBlockId(header);
 
       const prevBlock = this._st.blocks[nPrevBlockId];
@@ -1362,7 +1362,7 @@ export class FirmCore implements IMountedFirmCore {
 
       // Collect confirmations for this block
       await this._collectConfirmationsFromMounted(contract, bId);
-    } while (chain.headBlockId !== headBlId)
+    }
 
     if (!this._isChStateLoaded(this._st.states[headBlId])) {
       const efChain = assertDefined(await this.getChain(contract.address));
