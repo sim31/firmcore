@@ -581,7 +581,7 @@ export interface IFirmCore {
   init(car?: AsyncIterable<Uint8Array>, noDeploy?: boolean): Promise<void>;
   shutDown(): Promise<void>;
   createEFChain(args: EFConstructorArgs): Promise<EFChain>;
-  getChain(address: Address): Promise<EFChain | undefined>;
+  getChain(address: Address, skipSync?: boolean): Promise<EFChain | undefined>;
   lsChains(): Await<Address[]>;
   createWalletConfirmer(wallet: IWallet): Promise<BlockConfirmer>;
 
@@ -646,7 +646,7 @@ export interface IMountedFirmCore extends IFirmCore {
   mountChain(chainId: number): Promise<void>;
   onMountPointChanged(cb: MountPointChangedCb): void;
 
-  getChain(address: Address): Promise<MountedEFChain | undefined>;
+  getChain(address: Address, skipSync?: boolean): Promise<MountedEFChain | undefined>;
   createEFChain(args: EFConstructorArgs): Promise<MountedEFChain>;
 }
 
