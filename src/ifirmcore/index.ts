@@ -4,6 +4,7 @@ import { ByzantineChain } from '../exceptions/ByzantineChain.js';
 import { InvalidArgument } from '../exceptions/InvalidArgument.js';
 import { CarFileInfo } from '../helpers/car.js'
 import assert from '../helpers/assert.js';
+import { normalizeHexStr } from 'firmcontracts/interface/abi.js';
 
 export type Address = string;
 export type BlockId = string;
@@ -510,7 +511,8 @@ export async function getConfirmerAccounts(
   for (const addr of confirmerAddrs) {
     const account = await block.state.accountByAddress(addr);
     assert(account, "cannot find account");
-    accounts.accountByAddress[addr] = account!.id;
+    account!.address = normalizeHexStr(account!.address!);
+    accounts.accountByAddress[normalizeHexStr(addr)] = account!.id;
     accounts.accountById[account!.id] = account!;
   }
   return accounts;

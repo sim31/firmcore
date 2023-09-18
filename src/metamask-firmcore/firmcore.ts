@@ -1207,7 +1207,7 @@ export class FirmCore implements IMountedFirmCore {
     const gbId = getBlockId(genesisBl.header);
     const confirmers = assertDefined(args['confirmers']) as AccountValue[];
     const confOps = confirmers.map(conf => {
-      return createAddConfirmerOp(conf.addr, 1);
+      return createAddConfirmerOp(normalizeHexStr(conf.addr), 1);
     });
     const threshold = assertDefined(args['threshold']) as number;
     const confSet = updatedConfirmerSet(InitConfirmerSet, confOps, threshold);
