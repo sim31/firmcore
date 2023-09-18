@@ -24,6 +24,8 @@ import { MetaMaskSDK } from '@metamask/sdk';
 import { ByzantineChain } from '../exceptions/ByzantineChain.js';
 import { SignedBlockStruct } from 'firmcontracts/typechain-types/contracts/FirmChain.js';
 import { empty } from 'multiformats/bytes';
+import { getBlockNumberByTimestamp } from '../helpers/blockByTs.js';
+import { local } from 'fp-ts/lib/Reader.js';
 
 interface Chain {
   contract: XEdenPlusFractal | Address,
@@ -132,6 +134,9 @@ export class FirmCore implements IMountedFirmCore {
   private _syncStates: Record<Address, SyncState> = {};
 
   private _st: FirmCoreState;
+
+  // for fromBlock parameter in queries for events
+  private _fromBlockNum: number = 0;
 
   constructor(verbose: boolean = false, quiet: boolean = true) {
     this._verbose = verbose;
@@ -323,6 +328,23 @@ export class FirmCore implements IMountedFirmCore {
     return mountpoint;
   }
 
+  async _detectMStartBlock() {
+    const { provider } = this._getInitialized();
+    const chainId = assertDefined(this._mountpoint?.chainId);
+    const startBlockKey = `mstartBlock-${chainId}`;
+    const cachedNum = localStorage.getItem(startBlockKey);
+    if (cachedNum === null) {
+      const ts = Math.floor(new Date('2023-09-06:06:06:00Z').getTime() / 1000)
+      this._fromBlockNum = await getBlockNumberByTimestamp(provider, ts);
+      localStorage.setItem(startBlockKey, this._fromBlockNum.toString());
+      console.log('fromBlockNum retrieved: ', this._fromBlockNum);
+    } else {
+      this._fromBlockNum = Number.parseInt(cachedNum);
+      assert(this._fromBlockNum !== Number.NaN);
+      console.log('fromBlockNum taken from cache: ', this._fromBlockNum);
+    }
+  }
+
   async init(car?: AsyncIterable<Uint8Array>, noDeploy?: boolean): Promise<void> {
     // console.log("_init 1", !_ganacheProv, !_provider, !_signer);
     // assert(!_underlyingProvider && !_provider && !_signer, "Already initialized");
@@ -377,6 +399,8 @@ export class FirmCore implements IMountedFirmCore {
 
 
     await this._initFromStorage();
+
+    await this._detectMStartBlock();
 
     // if (car !== undefined) {
     //   await this.initFromCar(car);
@@ -1031,7 +1055,7 @@ export class FirmCore implements IMountedFirmCore {
     prevBlockId: BlockId,
   ): Promise<BlockValue[]> {
     const nProposalFilter = contract.filters.BlockProposed(prevBlockId);
-    const propEvents = await contract.queryFilter(nProposalFilter);
+    const propEvents = await contract.queryFilter(nProposalFilter, this._fromBlockNum);
     const bls: BlockValue[] = [];
     for (const ev of propEvents) {
       bls.push(this._parseBlock(ev.args.block));
@@ -1059,7 +1083,7 @@ export class FirmCore implements IMountedFirmCore {
     blockId: BlockId
   ): Promise<BlockValue | undefined> {
     const nExecFilter = contract.filters.BlockExecuted(blockId);
-    const execEvent = (await contract.queryFilter(nExecFilter))[0];
+    const execEvent = (await contract.queryFilter(nExecFilter, this._fromBlockNum))[0];
     if (execEvent !== undefined) {
       return this._parseBlock(execEvent.args.block);
     }
@@ -1071,7 +1095,7 @@ export class FirmCore implements IMountedFirmCore {
     blockId: BlockId
   ): Promise<Confirmation[]> {
     const confirmFilter = contract.filters.ExtBlockConfirmation(blockId);
-    const events = await contract.queryFilter(confirmFilter);
+    const events = await contract.queryFilter(confirmFilter, this._fromBlockNum);
     const confirms: Confirmation[] = [];
     for (const ev of events) {
       confirms.push({
@@ -1087,7 +1111,7 @@ export class FirmCore implements IMountedFirmCore {
     prevBlockId: BlockId
   ): Promise<BlockId | undefined> {
     const nFinalBlockFilter = contract.filters.BlockFinalized(prevBlockId);
-    const events = await contract.queryFilter(nFinalBlockFilter);
+    const events = await contract.queryFilter(nFinalBlockFilter, this._fromBlockNum);
     if (events.length > 1) {
       throw new ByzantineChain('Two finalized events extending the same block');
     } else if (events.length === 0) {
@@ -1157,7 +1181,7 @@ export class FirmCore implements IMountedFirmCore {
   private async _initFChainFromMounted(contract: XEdenPlusFractal): Promise<void> {
     const { factory } = this._getInitialized();
 
-    const events = await contract.queryFilter(contract.filters.Construction());
+    const events = await contract.queryFilter(contract.filters.Construction(), this._fromBlockNum);
     if (events.length !== 1) {
       throw new NotFound('Construction event not found in the mounted chain');
     }
